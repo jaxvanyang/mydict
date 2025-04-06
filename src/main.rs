@@ -1,5 +1,6 @@
-use std::fmt::Write;
+use std::{fmt::Write, fs};
 
+use directories::ProjectDirs;
 use iced::{
 	Element, Theme,
 	widget::{
@@ -8,6 +9,9 @@ use iced::{
 	},
 };
 use odict::{DefinitionType, Dictionary, DictionaryReader, Entry};
+
+pub const PROJECT_NAME: &str = "mydict";
+pub const PROJECT_TITLE: &str = "My Dictionary";
 
 #[derive(Debug)]
 struct State {
@@ -73,19 +77,40 @@ impl State {
 
 impl Default for State {
 	fn default() -> Self {
-		let dictionaries = vec![
-			DictionaryReader::new()
-				.read_from_path("enwn2odict-2024.2.odict")
-				.expect("ODict file exists")
-				.to_dictionary()
-				.expect("ODict imported"),
-		];
+		let proj_dirs = ProjectDirs::from("", "", PROJECT_NAME).unwrap();
+		let data_dir = proj_dirs.data_dir();
+		if !data_dir.exists() {
+			fs::create_dir(data_dir).expect("created directory");
+		}
+		let reader = DictionaryReader::new();
+		let dictionaries = data_dir
+			.read_dir()
+			.expect("read data directory")
+			.filter_map(|e| {
+				let path = e.expect("read data directory entry").path();
+				let path = path.to_str().expect("path should be unicode valid");
+				if path.ends_with(".odict") {
+					eprintln!("Loading {path}...");
+					let dict = reader
+						.read_from_path(path)
+						.expect("ODict file exists")
+						.to_dictionary()
+						.expect("ODict file valid");
+					eprintln!("Loaded {path}...");
+					Some(dict)
+				} else {
+					None
+				}
+			})
+			.collect::<Vec<Dictionary>>();
 		let word_list = dictionaries[0].lexicon()[..1000]
 			.iter()
 			.map(|s| s.to_string())
 			.collect::<Vec<String>>();
 		let word_md = entry2md(&dictionaries[0].entries["do"]);
 		let word_description = markdown::parse(&word_md).collect::<Vec<markdown::Item>>();
+
+		eprintln!("Initialization done.");
 
 		Self {
 			dictionaries,
@@ -98,7 +123,8 @@ impl Default for State {
 }
 
 fn main() -> iced::Result {
-	iced::run("My Dictionary", State::update, State::view)
+	eprintln!("Initialization starting...");
+	iced::run(PROJECT_TITLE, State::update, State::view)
 }
 
 /// Parse ODict Entry to markdown String
