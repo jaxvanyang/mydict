@@ -6,7 +6,7 @@ use iced::{
 	Length::Fill,
 	Subscription, Task, Theme,
 	widget::{
-		Column, Row, column, container, horizontal_rule, markdown, row, scrollable, text,
+		Column, Row, button, column, container, horizontal_rule, markdown, row, scrollable, text,
 		text_input, vertical_rule,
 	},
 	window,
@@ -19,9 +19,9 @@ pub const TITLE: &str = "My Dictionary";
 #[derive(Debug)]
 struct State {
 	pub dictionaries: Vec<Dictionary>,
-	pub search_word: String,
-	pub word_list: Vec<String>,
-	pub word_description: Vec<markdown::Item>,
+	pub search_term: String,
+	pub term_list: Vec<String>,
+	pub term_description: Vec<markdown::Item>,
 }
 
 #[derive(Debug, Clone)]
@@ -29,6 +29,7 @@ pub enum Message {
 	Created,
 	SearchChanged(String),
 	LinkClicked(markdown::Url),
+	TermSelected(usize),
 }
 
 impl Default for State {
@@ -59,16 +60,16 @@ impl Default for State {
 				}
 			})
 			.collect::<Vec<Dictionary>>();
-		let word_md = entry2md(&dictionaries[0].entries["do"]);
-		let word_description = markdown::parse(&word_md).collect::<Vec<markdown::Item>>();
+		let term_md = entry2md(&dictionaries[0].entries["do"]);
+		let term_description = markdown::parse(&term_md).collect::<Vec<markdown::Item>>();
 
 		eprintln!("Initialization done.");
 
 		Self {
 			dictionaries,
-			search_word: String::default(),
-			word_list: Vec::new(),
-			word_description,
+			search_term: String::default(),
+			term_list: Vec::new(),
+			term_description,
 		}
 	}
 }
@@ -76,17 +77,32 @@ impl Default for State {
 impl State {
 	pub fn view(&self) -> Element<Message> {
 		let ui = row![
-			container(scrollable(Column::from_iter(
-				self.word_list
-					.iter()
-					.map(|s| container(text!("{s}")).padding(5).into())
-			)),)
-			.width(200)
-			.padding(5),
+			scrollable(container(
+				Column::from_iter(self.term_list.iter().enumerate().map(|(i, s)| {
+					container(
+						button(s.as_str())
+							.style(|theme: &Theme, _| {
+								let palette = theme.extended_palette();
+
+								button::Style {
+									background: None,
+									text_color: palette.secondary.base.text,
+									border: iced::Border::default(),
+									shadow: iced::Shadow::default(),
+								}
+							})
+							.width(Fill)
+							.on_press(Message::TermSelected(i)),
+					)
+					.into()
+				}))
+				.width(200)
+				.padding(5),
+			)),
 			vertical_rule(2),
 			column![
 				container(
-					text_input("", &self.search_word)
+					text_input("", &self.search_term)
 						.id("search")
 						.on_input(Message::SearchChanged),
 				)
@@ -107,7 +123,7 @@ impl State {
 				horizontal_rule(2),
 				scrollable(
 					container(
-						markdown::view(&self.word_description, Theme::default())
+						markdown::view(&self.term_description, Theme::default())
 							.map(Message::LinkClicked),
 					)
 					.width(Fill)
@@ -123,10 +139,10 @@ impl State {
 		match message {
 			Message::Created => text_input::focus("search"),
 			Message::SearchChanged(s) => {
-				self.search_word = s.clone();
+				self.search_term = s.clone();
 				let s = s.trim();
 				let dict = &self.dictionaries[0];
-				self.word_list = dict
+				self.term_list = dict
 					.lexicon()
 					.into_iter()
 					.filter_map(|t| {
@@ -140,16 +156,25 @@ impl State {
 					.collect();
 
 				if !self.dictionaries[0].entries.contains_key(s) {
-					self.word_description.clear();
+					self.term_description.clear();
 					return Task::none();
 				}
 
 				let entry = &dict.entries[s];
-				self.word_description = markdown::parse(&entry2md(entry)).collect();
+				self.term_description = markdown::parse(&entry2md(entry)).collect();
 
 				Task::none()
 			}
-			_ => Task::none(),
+			Message::TermSelected(i) => {
+				let s = &self.term_list[i];
+
+				let dict = &self.dictionaries[0];
+				let entry = &dict.entries[s];
+				self.term_description = markdown::parse(&entry2md(entry)).collect();
+
+				Task::none()
+			}
+			Message::LinkClicked(_) => Task::none(),
 		}
 	}
 }
