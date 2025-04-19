@@ -6,7 +6,9 @@ use iced::{
 	Length::Fill,
 	Subscription, Task, Theme,
 	widget::{
-		Column, Row, button, column, container, horizontal_rule, markdown, row, scrollable, text,
+		Column, Row, Scrollable, button, column, container, horizontal_rule, markdown, row,
+		scrollable,
+		scrollable::{Direction, Scrollbar},
 		text_input, vertical_rule,
 	},
 	window,
@@ -18,7 +20,8 @@ pub const TITLE: &str = "My Dictionary";
 
 #[derive(Debug)]
 struct State {
-	pub dictionaries: Vec<Dictionary>,
+	pub dicts: Vec<Dictionary>,
+	pub selected_dict: usize,
 	pub search_term: String,
 	pub term_list: Vec<String>,
 	pub term_description: Vec<markdown::Item>,
@@ -30,6 +33,7 @@ pub enum Message {
 	SearchChanged(String),
 	LinkClicked(markdown::Url),
 	TermSelected(usize),
+	DictSelected(usize),
 }
 
 impl Default for State {
@@ -40,6 +44,7 @@ impl Default for State {
 			fs::create_dir(data_dir).expect("created directory");
 		}
 		let reader = DictionaryReader::new();
+		// TODO: read by alphabetic sorting
 		let dictionaries = data_dir
 			.read_dir()
 			.expect("read data directory")
@@ -60,21 +65,51 @@ impl Default for State {
 				}
 			})
 			.collect::<Vec<Dictionary>>();
-		let term_md = entry2md(&dictionaries[0].entries["do"]);
-		let term_description = markdown::parse(&term_md).collect::<Vec<markdown::Item>>();
 
 		eprintln!("Initialization done.");
 
 		Self {
-			dictionaries,
+			dicts: dictionaries,
+			selected_dict: 0,
 			search_term: String::default(),
 			term_list: Vec::new(),
-			term_description,
+			term_description: Self::default_term_description(),
 		}
 	}
 }
 
 impl State {
+	fn default_term_description() -> Vec<markdown::Item> {
+		markdown::parse("# Type something to search...").collect::<Vec<markdown::Item>>()
+	}
+
+	// TODO: log time for this function
+	/// Update state according to selected dictionary and term
+	pub fn refresh(&mut self) {
+		let s = self.search_term.trim();
+		if let Some(dict) = self.dicts.get(self.selected_dict) {
+			self.term_list = dict
+				.lexicon()
+				.into_iter()
+				.filter_map(|t| {
+					if t.starts_with(s) {
+						Some(t.to_string())
+					} else {
+						None
+					}
+				})
+				.take(1000)
+				.collect();
+
+			if dict.entries.contains_key(s) {
+				let entry = &dict.entries[s];
+				self.term_description = markdown::parse(&entry2md(entry)).collect();
+			} else {
+				self.term_description = Self::default_term_description();
+			}
+		}
+	}
+
 	pub fn view(&self) -> Element<Message> {
 		let ui = row![
 			scrollable(container(
@@ -109,16 +144,27 @@ impl State {
 				.height(50)
 				.padding(10),
 				horizontal_rule(2),
-				container(scrollable(Row::from_iter(self.dictionaries.iter().map(
-					|d| {
-						container(text!(
-							"{}",
-							d.name.as_ref().expect("dictionary should have name")
-						))
-						.padding(5)
+				container(Scrollable::with_direction(
+					Row::from_iter(self.dicts.iter().enumerate().map(|(i, d)| {
+						let name = d.name.as_ref().expect("dictionary should have name");
+						container(
+							button(name.as_str())
+								.style(|theme: &Theme, _| {
+									let palette = theme.extended_palette();
+
+									button::Style {
+										background: None,
+										text_color: palette.secondary.base.text,
+										border: iced::Border::default(),
+										shadow: iced::Shadow::default(),
+									}
+								})
+								.on_press(Message::DictSelected(i)),
+						)
 						.into()
-					}
-				))))
+					})),
+					Direction::Horizontal(Scrollbar::new())
+				))
 				.padding(5),
 				horizontal_rule(2),
 				scrollable(
@@ -137,45 +183,30 @@ impl State {
 
 	pub fn update(&mut self, message: Message) -> Task<Message> {
 		match message {
-			Message::Created => text_input::focus("search"),
+			Message::Created => {
+				self.refresh();
+				return text_input::focus("search");
+			}
 			Message::SearchChanged(s) => {
 				self.search_term = s.clone();
-				let s = s.trim();
-				let dict = &self.dictionaries[0];
-				self.term_list = dict
-					.lexicon()
-					.into_iter()
-					.filter_map(|t| {
-						if t.starts_with(s) {
-							Some(t.to_string())
-						} else {
-							None
-						}
-					})
-					.take(1000)
-					.collect();
-
-				if !self.dictionaries[0].entries.contains_key(s) {
-					self.term_description.clear();
-					return Task::none();
-				}
-
-				let entry = &dict.entries[s];
-				self.term_description = markdown::parse(&entry2md(entry)).collect();
-
-				Task::none()
+				self.refresh();
 			}
 			Message::TermSelected(i) => {
 				let s = &self.term_list[i];
 
-				let dict = &self.dictionaries[0];
-				let entry = &dict.entries[s];
-				self.term_description = markdown::parse(&entry2md(entry)).collect();
-
-				Task::none()
+				if let Some(dict) = self.dicts.get(self.selected_dict) {
+					let entry = &dict.entries[s];
+					self.term_description = markdown::parse(&entry2md(entry)).collect();
+				}
 			}
-			Message::LinkClicked(_) => Task::none(),
+			Message::DictSelected(i) => {
+				self.selected_dict = i;
+				self.refresh();
+			}
+			Message::LinkClicked(_) => (),
 		}
+
+		Task::none()
 	}
 }
 
@@ -197,14 +228,9 @@ pub fn entry2md(entry: &Entry) -> String {
 
 	for (i, ety) in entry.etymologies.iter().enumerate() {
 		write!(md, "\n### Etymology #{}\n", i + 1).unwrap();
-		write!(
-			md,
-			"\n*{}*\n",
-			ety.description
-				.as_ref()
-				.expect("Etymology should have description")
-		)
-		.unwrap();
+		if let Some(desc) = &ety.description {
+			write!(md, "\n*{}*\n", desc).unwrap();
+		}
 		for (pos, sense) in &ety.senses {
 			write!(md, "\n**{}**\n", pos.description()).unwrap();
 			for (j, def) in sense.definitions.iter().enumerate() {
