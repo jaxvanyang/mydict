@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=My Dictionary
+Comment=A simple fast dictionary
+Type=Application
+Icon=com.github.jaxvanyang.mydict
+Exec=mydict %F
+Terminal=false
+StartupNotify=true
+Categories=COSMIC
+Keywords=COSMIC
+MimeType=

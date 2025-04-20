@@ -1,2 +1,16 @@
+!debian/changelog
+!debian/control
+!debian/copyright
+!debian/install
+!debian/rules
+!debian/source
+
+**/*.rs.bk
+*.pdb
+.cargo/
 .zed/
-/target
+debian/*
+debug/
+target/
+vendor.tar
+vendor/
