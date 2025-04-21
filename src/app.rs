@@ -9,9 +9,13 @@ use cosmic::iced::{Alignment, Subscription};
 use cosmic::iced_widget::{column, horizontal_rule};
 use cosmic::prelude::*;
 use cosmic::widget::{self, button, menu, nav_bar, scrollable, search_input, text};
-use cosmic::{cosmic_theme, theme};
+use cosmic::{
+	cosmic_theme::{self},
+	theme,
+};
 use directories::ProjectDirs;
 use futures_util::SinkExt;
+use mydict::font::font_builder;
 use odict::{DefinitionType, Dictionary, DictionaryReader, Entry};
 use std::collections::HashMap;
 use std::fs;
@@ -391,33 +395,40 @@ impl AppModel {
 		let mut page = widget::column();
 
 		if let Some(entry) = &self.dict_entry {
-			page = page.push(text::title2(&entry.term));
+			page = page.push(text::title1(&entry.term));
 
 			for (i, ety) in entry.etymologies.iter().enumerate() {
-				page = page.push(text::title3(format!("Etymology #{}", i + 1)));
+				page = page.push(horizontal_rule(2));
+				if entry.etymologies.len() > 1 {
+					page = page.push(text::title2(format!("Etymology #{}", i + 1)));
+				}
 				if let Some(desc) = &ety.description {
-					// TODO: bold
 					page = page.push(text::body(desc));
 				}
 				for (pos, sense) in &ety.senses {
-					// TODO: ilatic
-					page = page.push(text::body(pos.description()));
+					page = page.push(
+						text::body(pos.description()).font(font_builder().italic().bold().build()),
+					);
 					for (j, def) in sense.definitions.iter().enumerate() {
 						match def {
 							DefinitionType::Definition(def) => {
-								page = page.push(text::body(format!("{}. {}", j + 1, def.value)));
+								page =
+									page.push(text::body(format!("{:>4}. {}", j + 1, def.value)));
 								for example in &def.examples {
-									page = page.push(text::body(format!("\t- {}", example.value)));
+									page = page.push(
+										text::body(format!("\t▸ {}", example.value))
+											.font(font_builder().italic().build()),
+									);
 								}
 
 								if !def.notes.is_empty() {
-									page = page.push(text::body("\tNotes"));
+									page = page.push(text::heading("\tNotes"));
 								}
 
 								for (k, note) in def.notes.iter().enumerate() {
 									page = page.push(text::body(format!(
-										"\t{}. {}",
-										k + 1,
+										"\t{:>4}. {}",
+										(k as u8 + b'a') as char,
 										note.value
 									)));
 								}
@@ -441,7 +452,7 @@ impl AppModel {
 			);
 		}
 
-		page.width(Length::Fill)
+		page.width(Length::Fill).spacing(5)
 	}
 }
 
