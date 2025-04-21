@@ -8,9 +8,11 @@
 **/*.rs.bk
 *.pdb
 .cargo/
-.zed/
 debian/*
 debug/
 target/
 vendor.tar
 vendor/
+
+.project.gf
+.zed/

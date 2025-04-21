@@ -79,25 +79,6 @@ impl cosmic::Application for AppModel {
 		core: cosmic::Core,
 		_flags: Self::Flags,
 	) -> (Self, Task<cosmic::Action<Self::Message>>) {
-		// Create a nav bar with three page items.
-		// let mut nav = nav_bar::Model::default();
-
-		// nav.insert()
-		// 	.text(fl!("page-id", num = 1))
-		// 	.data::<Page>(Page::Page1)
-		// 	.icon(icon::from_name("applications-science-symbolic"))
-		// 	.activate();
-
-		// nav.insert()
-		// 	.text(fl!("page-id", num = 2))
-		// 	.data::<Page>(Page::Page2)
-		// 	.icon(icon::from_name("applications-system-symbolic"));
-
-		// nav.insert()
-		// 	.text(fl!("page-id", num = 3))
-		// 	.data::<Page>(Page::Page3)
-		// 	.icon(icon::from_name("applications-games-symbolic"));
-
 		// Construct the app model with the runtime's core.
 		let mut app = AppModel {
 			core,
@@ -120,7 +101,6 @@ impl cosmic::Application for AppModel {
 			dicts: Self::load_dicts(),
 			selected_dict: 0,
 			search_term: String::new(),
-			// term_list: Vec::new(),
 			dict_entry: None,
 		};
 
@@ -348,7 +328,7 @@ impl AppModel {
 			fs::create_dir(data_dir).expect("created directory");
 		}
 		let reader = DictionaryReader::new();
-		// TODO: read by alphabetic sorting
+		// TODO: read by alphabetic order
 		let dicts = data_dir
 			.read_dir()
 			.expect("read data directory")
@@ -357,11 +337,15 @@ impl AppModel {
 				let path = path.to_str().expect("path should be unicode valid");
 				if path.ends_with(".odict") {
 					eprintln!("Loading {path}...");
-					let dict = reader
-						.read_from_path(path)
-						.expect("ODict file exists")
-						.to_dictionary()
-						.expect("ODict file valid");
+					let file = reader.read_from_path(path).expect("ODict file exists");
+					if !(file.version.major == 2 && file.version.minor >= 5) {
+						eprintln!(
+							"File version not compatible: {}, expect 2.5.0",
+							file.version
+						);
+						return None;
+					}
+					let dict = file.to_dictionary().expect("ODict file valid");
 					eprintln!("Loaded {path}...");
 					Some(dict)
 				} else {
