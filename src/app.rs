@@ -410,6 +410,7 @@ impl AppModel {
 						text::body(pos.description()).font(font_builder().italic().bold().build()),
 					);
 					for (j, def) in sense.definitions.iter().enumerate() {
+						let alphabetic_numbering = |i| (b'a' + i as u8) as char;
 						match def {
 							DefinitionType::Definition(def) => {
 								page =
@@ -428,13 +429,43 @@ impl AppModel {
 								for (k, note) in def.notes.iter().enumerate() {
 									page = page.push(text::body(format!(
 										"\t{:>4}. {}",
-										(k as u8 + b'a') as char,
+										alphabetic_numbering(k),
 										note.value
 									)));
 								}
 							}
-							DefinitionType::Group(_) => {
-								todo!();
+							DefinitionType::Group(group) => {
+								page = page.push(text::body(format!(
+									"{:>4}. {}",
+									j + 1,
+									group.description
+								)));
+
+								for (k, def) in group.definitions.iter().enumerate() {
+									page = page.push(text::body(format!(
+										"{:>8}. {}",
+										alphabetic_numbering(k),
+										def.value
+									)));
+									for example in &def.examples {
+										page = page.push(
+											text::body(format!("\t    ▸ {}", example.value))
+												.font(font_builder().italic().build()),
+										);
+									}
+
+									if !def.notes.is_empty() {
+										page = page.push(text::heading("\t    Notes"));
+									}
+
+									for (l, note) in def.notes.iter().enumerate() {
+										page = page.push(text::body(format!(
+											"\t{:>8}. {}",
+											l + 1,
+											note.value
+										)));
+									}
+								}
 							}
 						}
 					}
