@@ -157,12 +157,13 @@ impl cosmic::Application for AppModel {
 			.on_input(Message::Search)
 			.always_active();
 
-		let dicts = scrollable::horizontal(widget::Row::from_iter(
-			self.dicts.iter().enumerate().map(|(i, d)| {
+		#[allow(clippy::from_iter_instead_of_collect)]
+		let dicts = scrollable::horizontal(widget::Row::from_iter(self.dicts.iter().enumerate().map(
+			|(i, d)| {
 				let name = d.name.as_ref().expect("dictionary should have name");
 				button::text(name).on_press(Message::SelectDict(i)).into()
-			}),
-		));
+			},
+		)));
 
 		let term_page = scrollable(self.build_term_page());
 
@@ -189,6 +190,7 @@ impl cosmic::Application for AppModel {
 			// Create a subscription which emits updates through a channel.
 			Subscription::run_with_id(
 				std::any::TypeId::of::<MySubscription>(),
+				#[allow(clippy::semicolon_if_nothing_returned)]
 				cosmic::iced::stream::channel(4, move |mut channel| async move {
 					_ = channel.send(Message::SubscriptionChannel).await;
 
@@ -274,6 +276,7 @@ impl cosmic::Application for AppModel {
 
 impl AppModel {
 	/// The about page for this app.
+	#[allow(clippy::unused_self)]
 	pub fn about(&self) -> Element<Message> {
 		let cosmic_theme::Spacing { space_xxs, .. } = theme::active().cosmic().spacing;
 
@@ -323,7 +326,7 @@ impl AppModel {
 		}
 	}
 
-	/// Load ODict dictionaries.
+	/// Load `ODict` dictionaries.
 	pub fn load_dicts() -> Vec<Dictionary> {
 		// TODO: read name from metadata
 		let proj_dirs = ProjectDirs::from("", "", "mydict").unwrap();
@@ -339,6 +342,7 @@ impl AppModel {
 			.filter_map(|e| {
 				let path = e.expect("read data directory entry").path();
 				let path = path.to_str().expect("path should be unicode valid");
+				#[allow(clippy::case_sensitive_file_extension_comparisons)]
 				if path.ends_with(".odict") {
 					eprintln!("Loading {path}...");
 					let file = reader.read_from_path(path).expect("ODict file exists");
@@ -390,7 +394,7 @@ impl AppModel {
 		}
 	}
 
-	/// Build term page from ODict entry
+	/// Build term page from `ODict` entry
 	fn build_term_page(&self) -> widget::Column<Message> {
 		let mut page = widget::column();
 
@@ -403,14 +407,16 @@ impl AppModel {
 					page = page.push(text::title2(format!("Etymology #{}", i + 1)));
 				}
 				if let Some(desc) = &ety.description {
-					page = page.push(text::body(desc));
+					for p in desc.lines().map(text::body) {
+						page = page.push(p);
+					}
 				}
 				for (pos, sense) in &ety.senses {
 					page = page.push(
 						text::body(pos.description()).font(font_builder().italic().bold().build()),
 					);
 					for (j, def) in sense.definitions.iter().enumerate() {
-						let alphabetic_numbering = |i| (b'a' + i as u8) as char;
+						let alphabetic_numbering = |i| (b'a' + u8::try_from(i).unwrap()) as char;
 						match def {
 							DefinitionType::Definition(def) => {
 								page =
