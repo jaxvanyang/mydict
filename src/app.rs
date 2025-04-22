@@ -18,7 +18,7 @@ use futures_util::SinkExt;
 use mydict::font::font_builder;
 use odict::{DefinitionType, Dictionary, DictionaryReader, Entry};
 use std::collections::HashMap;
-use std::fs;
+use std::{fs, time};
 
 const REPOSITORY: &str = env!("CARGO_PKG_REPOSITORY");
 const APP_ICON: &[u8] = include_bytes!("../resources/icons/hicolor/scalable/apps/icon.svg");
@@ -78,22 +78,22 @@ impl cosmic::Application for AppModel {
 		&mut self.core
 	}
 
-	/// Initializes the application with any given flags and startup commands.
 	fn init(core: cosmic::Core, flags: Self::Flags) -> (Self, Task<cosmic::Action<Self::Message>>) {
-		// Construct the app model with the runtime's core.
+		let _span = tracing::info_span!("init").entered();
+		let t0 = time::Instant::now();
+
 		let mut app = AppModel {
 			core,
 			context_page: ContextPage::default(),
 			nav: nav_bar::Model::default(),
 			key_binds: HashMap::new(),
-			// Optional configuration file for an application.
 			config: cosmic_config::Config::new(Self::APP_ID, Config::VERSION)
 				.map(|context| match Config::get_entry(&context) {
 					Ok(config) => config,
-					Err((_errors, config)) => {
-						// for why in errors {
-						// 	tracing::error!(%why, "error loading app config");
-						// }
+					Err((errors, config)) => {
+						for why in errors {
+							tracing::error!(%why, "error loading app config");
+						}
 
 						config
 					}
@@ -105,6 +105,8 @@ impl cosmic::Application for AppModel {
 			dict_entry: None,
 		};
 		app.search();
+
+		tracing::info!("initialized in {:.3}s", t0.elapsed().as_secs_f32());
 
 		// Create a startup command that sets the window title.
 		let command = app.update_title();
@@ -199,9 +201,9 @@ impl cosmic::Application for AppModel {
 			self.core()
 				.watch_config::<Config>(Self::APP_ID)
 				.map(|update| {
-					// for why in update.errors {
-					//     tracing::error!(?why, "app config error");
-					// }
+					for why in update.errors {
+						tracing::error!(?why, "app config error");
+					}
 
 					Message::UpdateConfig(update.config)
 				}),
@@ -240,7 +242,7 @@ impl cosmic::Application for AppModel {
 			Message::LaunchUrl(url) => match open::that_detached(&url) {
 				Ok(()) => {}
 				Err(err) => {
-					eprintln!("failed to open {url:?}: {err}");
+					tracing::error!("failed to open {url:?}: {err}");
 				}
 			},
 
@@ -342,17 +344,18 @@ impl AppModel {
 				let path = path.to_str().expect("path should be unicode valid");
 				#[allow(clippy::case_sensitive_file_extension_comparisons)]
 				if path.ends_with(".odict") {
-					eprintln!("Loading {path}...");
+					let t0 = time::Instant::now();
+					tracing::info!("loading ODict {path}...");
 					let file = reader.read_from_path(path).expect("ODict file exists");
 					if !(file.version.major == 2 && file.version.minor >= 5) {
-						eprintln!(
-							"File version not compatible: {}, expect 2.5.0",
+						tracing::info!(
+							"ODict file version not compatible: {}, expect ^2.5.0",
 							file.version
 						);
 						return None;
 					}
 					let dict = file.to_dictionary().expect("ODict file valid");
-					eprintln!("Loaded {path}...");
+					tracing::info!("loaded ODict {path} in {:.3}s", t0.elapsed().as_secs_f32());
 					Some(dict)
 				} else {
 					None
@@ -363,9 +366,11 @@ impl AppModel {
 		dicts
 	}
 
-	// TODO: log execution time of this function
 	/// Search term in selected dictionary
 	fn search(&mut self) {
+		let _span = tracing::info_span!("search").entered();
+		let t0 = time::Instant::now();
+
 		self.nav.clear();
 
 		let s = self.search_term.trim();
@@ -375,6 +380,7 @@ impl AppModel {
 		}
 
 		if let Some(dict) = self.dicts.get(self.selected_dict) {
+			tracing::info!("searching \"{}\" in dict {}...", s, self.selected_dict);
 			for (i, term) in dict
 				.lexicon()
 				.into_iter()
@@ -389,6 +395,7 @@ impl AppModel {
 			}
 
 			self.dict_entry = dict.entries.get(s).cloned();
+			tracing::info!("search finished in {:.3}s", t0.elapsed().as_secs_f32())
 		}
 	}
 
