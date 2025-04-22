@@ -61,8 +61,8 @@ impl cosmic::Application for AppModel {
 	/// The async executor that will be used to run your application's commands.
 	type Executor = cosmic::executor::Default;
 
-	/// Data that your application receives to its init method.
-	type Flags = ();
+	/// Command line search term
+	type Flags = String;
 
 	/// Messages which the application and its widgets will emit.
 	type Message = Message;
@@ -79,10 +79,7 @@ impl cosmic::Application for AppModel {
 	}
 
 	/// Initializes the application with any given flags and startup commands.
-	fn init(
-		core: cosmic::Core,
-		_flags: Self::Flags,
-	) -> (Self, Task<cosmic::Action<Self::Message>>) {
+	fn init(core: cosmic::Core, flags: Self::Flags) -> (Self, Task<cosmic::Action<Self::Message>>) {
 		// Construct the app model with the runtime's core.
 		let mut app = AppModel {
 			core,
@@ -95,7 +92,7 @@ impl cosmic::Application for AppModel {
 					Ok(config) => config,
 					Err((_errors, config)) => {
 						// for why in errors {
-						//     tracing::error!(%why, "error loading app config");
+						// 	tracing::error!(%why, "error loading app config");
 						// }
 
 						config
@@ -104,9 +101,10 @@ impl cosmic::Application for AppModel {
 				.unwrap_or_default(),
 			dicts: Self::load_dicts(),
 			selected_dict: 0,
-			search_term: String::new(),
+			search_term: flags,
 			dict_entry: None,
 		};
+		app.search();
 
 		// Create a startup command that sets the window title.
 		let command = app.update_title();
@@ -248,12 +246,12 @@ impl cosmic::Application for AppModel {
 
 			Message::Search(s) => {
 				self.search_term = s;
-				self.refresh();
+				self.search();
 			}
 
 			Message::SelectDict(i) => {
 				self.selected_dict = i;
-				self.refresh();
+				self.search();
 			}
 		}
 		Task::none()
@@ -366,8 +364,8 @@ impl AppModel {
 	}
 
 	// TODO: log execution time of this function
-	/// Update state according to selected dictionary and term
-	pub fn refresh(&mut self) {
+	/// Search term in selected dictionary
+	fn search(&mut self) {
 		self.nav.clear();
 
 		let s = self.search_term.trim();

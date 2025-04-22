@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MIT
 
+use std::env;
+
 mod app;
 mod config;
 mod i18n;
@@ -18,6 +20,12 @@ fn main() -> cosmic::iced::Result {
 			.min_height(180.0),
 	);
 
-	// Starts the application's event loop with `()` as the application's flags.
-	cosmic::app::run::<app::AppModel>(settings, ())
+	cosmic::app::run::<app::AppModel>(
+		settings,
+		env::args()
+			.collect::<Vec<String>>()
+			.get(1)
+			.cloned()
+			.unwrap_or_default(),
+	)
 }
