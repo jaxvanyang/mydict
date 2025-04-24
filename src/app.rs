@@ -36,11 +36,8 @@ pub struct AppModel {
 	key_binds: HashMap<menu::KeyBind, MenuAction>,
 	// Configuration data that persists between application runs.
 	config: Config,
-
+	config_manager: cosmic_config::Config,
 	dicts: Vec<Dictionary>,
-	selected_dict: usize,
-	search_term: String,
-	// term_list: Vec<String>,
 	dict_entry: Option<Entry>,
 }
 
@@ -81,29 +78,32 @@ impl cosmic::Application for AppModel {
 	fn init(core: cosmic::Core, flags: Self::Flags) -> (Self, Task<cosmic::Action<Self::Message>>) {
 		let _span = tracing::info_span!("init").entered();
 		let t0 = time::Instant::now();
+		let config_manager = cosmic_config::Config::new(Self::APP_ID, Config::VERSION).unwrap();
 
 		let mut app = AppModel {
 			core,
 			context_page: ContextPage::default(),
 			nav: nav_bar::Model::default(),
 			key_binds: HashMap::new(),
-			config: cosmic_config::Config::new(Self::APP_ID, Config::VERSION)
-				.map(|context| match Config::get_entry(&context) {
-					Ok(config) => config,
-					Err((errors, config)) => {
-						for why in errors {
-							tracing::error!(%why, "error loading app config");
-						}
-
-						config
+			config: match Config::get_entry(&config_manager) {
+				Ok(config) => config,
+				Err((errors, config)) => {
+					for why in errors {
+						tracing::error!(%why, "error loading app config");
 					}
-				})
-				.unwrap_or_default(),
+
+					config
+				}
+			},
+			config_manager,
 			dicts: Self::load_dicts(),
-			selected_dict: 0,
-			search_term: flags,
 			dict_entry: None,
 		};
+		if !flags.is_empty() {
+			app.config
+				.set_search_term(&app.config_manager, flags)
+				.unwrap();
+		}
 		app.search();
 
 		tracing::info!("initialized in {:.3}s", t0.elapsed().as_secs_f32());
@@ -153,7 +153,7 @@ impl cosmic::Application for AppModel {
 	/// events received by widgets will be passed to the update method.
 	fn view(&self) -> Element<Self::Message> {
 		// TODO: move to title bar
-		let search = search_input("", &self.search_term)
+		let search = search_input("", &self.config.search_term)
 			.on_input(Message::Search)
 			.always_active();
 
@@ -247,12 +247,19 @@ impl cosmic::Application for AppModel {
 			},
 
 			Message::Search(s) => {
-				self.search_term = s;
+				self.config
+					.set_search_term(&self.config_manager, s)
+					.unwrap();
 				self.search();
 			}
 
 			Message::SelectDict(i) => {
-				self.selected_dict = i;
+				if i == self.config.selected_dict {
+					return Task::none();
+				}
+				self.config
+					.set_selected_dict(&self.config_manager, i)
+					.unwrap();
 				self.search();
 			}
 		}
@@ -264,7 +271,7 @@ impl cosmic::Application for AppModel {
 		// Activate the page in the model.
 		self.nav.activate(id);
 
-		if let Some(dict) = self.dicts.get(self.selected_dict) {
+		if let Some(dict) = self.dicts.get(self.config.selected_dict) {
 			if let Some(s) = self.nav.text(id) {
 				self.dict_entry = Some(dict.entries[s].clone());
 			}
@@ -373,14 +380,18 @@ impl AppModel {
 
 		self.nav.clear();
 
-		let s = self.search_term.trim();
+		let s = self.config.search_term.trim();
 		if s.is_empty() {
 			self.dict_entry = None;
 			return;
 		}
 
-		if let Some(dict) = self.dicts.get(self.selected_dict) {
-			tracing::info!("searching \"{}\" in dict {}...", s, self.selected_dict);
+		if let Some(dict) = self.dicts.get(self.config.selected_dict) {
+			tracing::info!(
+				"searching \"{}\" in dict {}...",
+				s,
+				self.config.selected_dict
+			);
 			for (i, term) in dict
 				.lexicon()
 				.into_iter()
@@ -395,7 +406,11 @@ impl AppModel {
 			}
 
 			self.dict_entry = dict.entries.get(s).cloned();
-			tracing::info!("search finished in {:.3}s", t0.elapsed().as_secs_f32())
+			tracing::info!("search finished in {:.3}s", t0.elapsed().as_secs_f32());
+		} else {
+			tracing::error!("selected_dict not valid: {}", self.config.selected_dict);
+			self.config.selected_dict = 0;
+			tracing::info!("reset selected_dict to 0");
 		}
 	}
 
@@ -484,7 +499,7 @@ impl AppModel {
 			}
 		} else {
 			page = page.push(
-				text::title1(if self.search_term.is_empty() {
+				text::title1(if self.config.search_term.is_empty() {
 					"Type to search"
 				} else {
 					"Search not found"
