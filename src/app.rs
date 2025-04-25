@@ -16,9 +16,10 @@ use cosmic::{
 use directories::ProjectDirs;
 use futures_util::SinkExt;
 use mydict::font::font_builder;
-use odict::{DefinitionType, Dictionary, DictionaryReader, Entry};
+use mydict::{LazyDict, elapsed_secs, now};
+use odict::{DefinitionType, DictionaryReader, Entry};
 use std::collections::HashMap;
-use std::{fs, time};
+use std::fs;
 
 const REPOSITORY: &str = env!("CARGO_PKG_REPOSITORY");
 const APP_ICON: &[u8] = include_bytes!("../resources/icons/hicolor/scalable/apps/icon.svg");
@@ -37,7 +38,7 @@ pub struct AppModel {
 	// Configuration data that persists between application runs.
 	config: Config,
 	config_manager: cosmic_config::Config,
-	dicts: Vec<Dictionary>,
+	dicts: Vec<LazyDict>,
 	dict_entry: Option<Entry>,
 }
 
@@ -77,7 +78,7 @@ impl cosmic::Application for AppModel {
 
 	fn init(core: cosmic::Core, flags: Self::Flags) -> (Self, Task<cosmic::Action<Self::Message>>) {
 		let _span = tracing::info_span!("init").entered();
-		let t0 = time::Instant::now();
+		let t0 = now();
 		let config_manager = cosmic_config::Config::new(Self::APP_ID, Config::VERSION).unwrap();
 
 		let mut app = AppModel {
@@ -160,7 +161,11 @@ impl cosmic::Application for AppModel {
 		#[allow(clippy::from_iter_instead_of_collect)]
 		let dicts = scrollable::horizontal(widget::Row::from_iter(self.dicts.iter().enumerate().map(
 			|(i, d)| {
-				let name = d.name.as_ref().expect("dictionary should have name");
+				let name = d
+					.name()
+					.as_ref()
+					.expect("dictionary should have name")
+					.clone();
 				button::text(name).on_press(Message::SelectDict(i)).into()
 			},
 		)));
@@ -271,9 +276,9 @@ impl cosmic::Application for AppModel {
 		// Activate the page in the model.
 		self.nav.activate(id);
 
-		if let Some(dict) = self.dicts.get(self.config.selected_dict) {
+		if let Some(dict) = self.dicts.get_mut(self.config.selected_dict) {
 			if let Some(s) = self.nav.text(id) {
-				self.dict_entry = Some(dict.entries[s].clone());
+				self.dict_entry = Some(dict.entries()[s].clone());
 			}
 		}
 
@@ -333,8 +338,8 @@ impl AppModel {
 		}
 	}
 
-	/// Load `ODict` dictionaries.
-	pub fn load_dicts() -> Vec<Dictionary> {
+	/// Load dictionaries.
+	pub fn load_dicts() -> Vec<LazyDict> {
 		// TODO: read name from metadata
 		let proj_dirs = ProjectDirs::from("", "", "mydict").unwrap();
 		let data_dir = proj_dirs.data_dir();
@@ -343,7 +348,7 @@ impl AppModel {
 		}
 		let reader = DictionaryReader::new();
 		// TODO: read by alphabetic order
-		let dicts = data_dir
+		let dicts: Vec<LazyDict> = data_dir
 			.read_dir()
 			.expect("read data directory")
 			.filter_map(|e| {
@@ -351,8 +356,7 @@ impl AppModel {
 				let path = path.to_str().expect("path should be unicode valid");
 				#[allow(clippy::case_sensitive_file_extension_comparisons)]
 				if path.ends_with(".odict") {
-					let t0 = time::Instant::now();
-					tracing::info!("loading ODict {path}...");
+					let t0 = now();
 					let file = reader.read_from_path(path).expect("ODict file exists");
 					if !(file.version.major == 2 && file.version.minor >= 5) {
 						tracing::info!(
@@ -361,14 +365,13 @@ impl AppModel {
 						);
 						return None;
 					}
-					let dict = file.to_dictionary().expect("ODict file valid");
-					tracing::info!("loaded ODict {path} in {:.3}s", t0.elapsed().as_secs_f32());
-					Some(dict)
+					tracing::info!("loaded ODict {path} in {:.3}s", elapsed_secs(&t0));
+					Some(file.into())
 				} else {
 					None
 				}
 			})
-			.collect::<Vec<Dictionary>>();
+			.collect();
 
 		dicts
 	}
@@ -376,7 +379,7 @@ impl AppModel {
 	/// Search term in selected dictionary
 	fn search(&mut self) {
 		let _span = tracing::info_span!("search").entered();
-		let t0 = time::Instant::now();
+		let t0 = now();
 
 		self.nav.clear();
 
@@ -386,12 +389,7 @@ impl AppModel {
 			return;
 		}
 
-		if let Some(dict) = self.dicts.get(self.config.selected_dict) {
-			tracing::info!(
-				"searching \"{}\" in dict {}...",
-				s,
-				self.config.selected_dict
-			);
+		if let Some(dict) = self.dicts.get_mut(self.config.selected_dict) {
 			for (i, term) in dict
 				.lexicon()
 				.into_iter()
@@ -405,8 +403,13 @@ impl AppModel {
 				}
 			}
 
-			self.dict_entry = dict.entries.get(s).cloned();
-			tracing::info!("search finished in {:.3}s", t0.elapsed().as_secs_f32());
+			self.dict_entry = dict.entries().get(s).cloned();
+			tracing::info!(
+				"search {} in dict {} finished in {:.3}s",
+				s,
+				self.config.selected_dict,
+				elapsed_secs(&t0)
+			);
 		} else {
 			tracing::error!("selected_dict not valid: {}", self.config.selected_dict);
 			self.config.selected_dict = 0;
