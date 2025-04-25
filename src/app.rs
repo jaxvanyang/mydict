@@ -34,6 +34,7 @@ pub struct AppModel {
 	/// Contains items assigned to the nav bar panel.
 	nav: nav_bar::Model,
 	/// Key bindings for the application's menu bar.
+	#[allow(clippy::zero_sized_map_values)]
 	key_binds: HashMap<menu::KeyBind, MenuAction>,
 	// Configuration data that persists between application runs.
 	config: Config,
@@ -378,7 +379,7 @@ impl AppModel {
 
 	/// Search term in selected dictionary
 	fn search(&mut self) {
-		let _span = tracing::info_span!("search").entered();
+		let _span = tracing::debug_span!("search").entered();
 		let t0 = now();
 
 		self.nav.clear();
@@ -390,22 +391,16 @@ impl AppModel {
 		}
 
 		if let Some(dict) = self.dicts.get_mut(self.config.selected_dict) {
-			for (i, term) in dict
-				.lexicon()
-				.into_iter()
-				.filter(|t| t.starts_with(s))
-				.take(1000)
-				.enumerate()
-			{
-				let item = self.nav.insert().text(term.to_string());
+			for (i, term) in dict.search(s).into_iter().take(1000).enumerate() {
+				let item = self.nav.insert().text(term);
 				if i == 0 {
 					item.activate();
 				}
 			}
 
 			self.dict_entry = dict.entries().get(s).cloned();
-			tracing::info!(
-				"search {} in dict {} finished in {:.3}s",
+			tracing::debug!(
+				"search \"{}\" in dict {} finished in {:.3}s",
 				s,
 				self.config.selected_dict,
 				elapsed_secs(&t0)
