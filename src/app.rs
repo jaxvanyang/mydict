@@ -399,8 +399,9 @@ impl AppModel {
 
 		if let Some(dict) = self.dicts.get_mut(self.config.selected_dict) {
 			for (i, term) in dict.search(s).into_iter().take(1000).enumerate() {
+				let should_activate = i == 0 && term == s;
 				let item = self.nav.insert().text(term);
-				if i == 0 {
+				if should_activate {
 					item.activate();
 				}
 			}
