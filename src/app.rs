@@ -255,6 +255,7 @@ impl cosmic::Application for AppModel {
 					.set_search_term(&self.config_manager, s)
 					.unwrap();
 				self.search();
+				return self.update_title();
 			}
 
 			Message::SearchClear => {
@@ -262,6 +263,7 @@ impl cosmic::Application for AppModel {
 					.set_search_term(&self.config_manager, String::new())
 					.unwrap();
 				self.search();
+				return self.update_title();
 			}
 
 			Message::SelectDict(i) => {
@@ -332,9 +334,9 @@ impl AppModel {
 	pub fn update_title(&mut self) -> Task<cosmic::Action<Message>> {
 		let mut window_title = fl!("app-title");
 
-		if let Some(page) = self.nav.text(self.nav.active()) {
+		if let Some(entry) = &self.dict_entry {
 			window_title.push_str(" — ");
-			window_title.push_str(page);
+			window_title.push_str(&entry.term);
 		}
 
 		if let Some(id) = self.core.main_window_id() {
