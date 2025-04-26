@@ -8,7 +8,7 @@ use cosmic::iced::Length::{self};
 use cosmic::iced::{Alignment, Subscription};
 use cosmic::iced_widget::{column, horizontal_rule};
 use cosmic::prelude::*;
-use cosmic::widget::{self, button, menu, nav_bar, scrollable, search_input, text};
+use cosmic::widget::{self, button, menu, nav_bar, scrollable, text};
 use cosmic::{
 	cosmic_theme::{self},
 	theme,
@@ -52,6 +52,7 @@ pub enum Message {
 	UpdateConfig(Config),
 	LaunchUrl(String),
 	Search(String),
+	SearchClear,
 	SelectDict(usize),
 }
 
@@ -129,6 +130,15 @@ impl cosmic::Application for AppModel {
 		vec![menu_bar.into()]
 	}
 
+	fn header_center(&self) -> Vec<Element<Self::Message>> {
+		let search_input = widget::search_input("", &self.config.search_term)
+			.on_input(Message::Search)
+			.on_clear(Message::SearchClear)
+			.always_active();
+
+		vec![search_input.into()]
+	}
+
 	/// Enables the COSMIC application to create a nav bar with this model.
 	fn nav_model(&self) -> Option<&nav_bar::Model> {
 		Some(&self.nav)
@@ -154,11 +164,6 @@ impl cosmic::Application for AppModel {
 	/// Application events will be processed through the view. Any messages emitted by
 	/// events received by widgets will be passed to the update method.
 	fn view(&self) -> Element<Self::Message> {
-		// TODO: move to title bar
-		let search = search_input("", &self.config.search_term)
-			.on_input(Message::Search)
-			.always_active();
-
 		#[allow(clippy::from_iter_instead_of_collect)]
 		let dicts = scrollable::horizontal(widget::Row::from_iter(self.dicts.iter().enumerate().map(
 			|(i, d)| {
@@ -171,17 +176,10 @@ impl cosmic::Application for AppModel {
 			},
 		)));
 
-		let term_page = scrollable(self.build_term_page());
+		// TODO: use custom widget
+		let term_page = scrollable(self.build_term_page().padding(10));
 
-		column![
-			search,
-			horizontal_rule(2),
-			dicts,
-			horizontal_rule(2),
-			term_page
-		]
-		.spacing(5)
-		.into()
+		column![dicts, term_page].spacing(5).into()
 	}
 
 	/// Register subscriptions for this application.
@@ -255,6 +253,13 @@ impl cosmic::Application for AppModel {
 			Message::Search(s) => {
 				self.config
 					.set_search_term(&self.config_manager, s)
+					.unwrap();
+				self.search();
+			}
+
+			Message::SearchClear => {
+				self.config
+					.set_search_term(&self.config_manager, String::new())
 					.unwrap();
 				self.search();
 			}
@@ -414,7 +419,7 @@ impl AppModel {
 
 	/// Build term page from `ODict` entry
 	fn build_term_page(&self) -> widget::Column<Message> {
-		let mut page = widget::column();
+		let mut page = widget::column().push(horizontal_rule(2));
 
 		if let Some(entry) = &self.dict_entry {
 			page = page.push(text::title1(&entry.term));
