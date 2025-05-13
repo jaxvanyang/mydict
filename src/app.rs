@@ -5,13 +5,16 @@ use crate::fl;
 use cosmic::app::context_drawer;
 use cosmic::cosmic_config::{self, CosmicConfigEntry};
 use cosmic::iced::Length::{self};
-use cosmic::iced::{Alignment, Subscription};
+use cosmic::iced::{Alignment, Subscription, window};
 use cosmic::iced_widget::{column, horizontal_rule};
 use cosmic::prelude::*;
 use cosmic::widget::{self, button, menu, nav_bar, scrollable, text};
 use cosmic::{
 	cosmic_theme::{self},
 	theme,
+};
+use cosmic_files::dialog::{
+	Dialog, DialogFilter, DialogFilterPattern, DialogKind, DialogMessage, DialogResult,
 };
 use directories::ProjectDirs;
 use futures_util::SinkExt;
@@ -34,13 +37,13 @@ pub struct AppModel {
 	/// Contains items assigned to the nav bar panel.
 	nav: nav_bar::Model,
 	/// Key bindings for the application's menu bar.
-	#[allow(clippy::zero_sized_map_values)]
 	key_binds: HashMap<menu::KeyBind, MenuAction>,
 	// Configuration data that persists between application runs.
 	config: Config,
 	config_manager: cosmic_config::Config,
 	dicts: Vec<LazyDict>,
 	dict_entry: Option<Entry>,
+	dialog: Option<Dialog<Message>>,
 }
 
 /// Messages emitted by the application and its widgets.
@@ -54,6 +57,9 @@ pub enum Message {
 	Search(String),
 	SearchClear,
 	SelectDict(usize),
+	UpdateDialog(DialogMessage),
+	ImportDictDialog,
+	ImportDictResult(DialogResult),
 }
 
 /// Create a COSMIC application from the app model
@@ -101,6 +107,7 @@ impl cosmic::Application for AppModel {
 			config_manager,
 			dicts: Self::load_dicts(),
 			dict_entry: None,
+			dialog: None,
 		};
 		if !flags.is_empty() {
 			app.config
@@ -119,13 +126,21 @@ impl cosmic::Application for AppModel {
 
 	/// Elements to pack at the start of the header bar.
 	fn header_start(&self) -> Vec<Element<Self::Message>> {
-		let menu_bar = menu::bar(vec![menu::Tree::with_children(
+		let file_menu = menu::Tree::with_children(
+			menu::root(fl!("file")),
+			menu::items(
+				&self.key_binds,
+				vec![menu::Item::Button(fl!("import"), None, MenuAction::Import)],
+			),
+		);
+		let view_menu = menu::Tree::with_children(
 			menu::root(fl!("view")),
 			menu::items(
 				&self.key_binds,
 				vec![menu::Item::Button(fl!("about"), None, MenuAction::About)],
 			),
-		)]);
+		);
+		let menu_bar = menu::bar(vec![file_menu, view_menu]);
 
 		vec![menu_bar.into()]
 	}
@@ -157,6 +172,13 @@ impl cosmic::Application for AppModel {
 			)
 			.title(fl!("about")),
 		})
+	}
+
+	fn view_window(&self, window_id: window::Id) -> Element<Self::Message> {
+		match &self.dialog {
+			Some(dialog) => dialog.view(window_id),
+			None => widget::text("Unknown window ID").into(),
+		}
 	}
 
 	/// Describes the interface based on the current state of the application model.
@@ -274,6 +296,42 @@ impl cosmic::Application for AppModel {
 					.set_selected_dict(&self.config_manager, i)
 					.unwrap();
 				self.search();
+			}
+
+			Message::ImportDictDialog => {
+				if self.dialog.is_none() {
+					let (mut dialog, command) = Dialog::new(
+						DialogKind::OpenFile,
+						None,
+						Message::UpdateDialog,
+						Message::ImportDictResult,
+					);
+					let filter = DialogFilter {
+						label: "ODict".to_string(),
+						patterns: vec![DialogFilterPattern::Glob("*.odict".to_string())],
+					};
+					let set_filter = dialog.set_filters([filter], Some(0));
+
+					self.dialog = Some(dialog);
+					return Task::batch([set_filter, command]);
+				}
+			}
+
+			Message::UpdateDialog(msg) => {
+				if let Some(dialog) = &mut self.dialog {
+					return dialog.update(msg);
+				}
+			}
+
+			Message::ImportDictResult(result) => {
+				self.dialog = None;
+				match result {
+					DialogResult::Cancel => (),
+					DialogResult::Open(path_bufs) => {
+						// TODO: import ODict file
+						dbg!(path_bufs);
+					}
+				}
 			}
 		}
 		Task::none()
@@ -528,6 +586,7 @@ pub enum ContextPage {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MenuAction {
+	Import,
 	About,
 }
 
@@ -537,6 +596,7 @@ impl menu::action::MenuAction for MenuAction {
 	fn message(&self) -> Self::Message {
 		match self {
 			MenuAction::About => Message::ToggleContextPage(ContextPage::About),
+			MenuAction::Import => Message::ImportDictDialog,
 		}
 	}
 }

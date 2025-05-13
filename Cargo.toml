@@ -24,6 +24,10 @@ tracing-subscriber = "0.3.19"
 version = "0.15"
 features = ["fluent-system", "desktop-requester"]
 
+[dependencies.cosmic-files]
+git = "https://github.com/pop-os/cosmic-files.git"
+default-features = false
+
 [dependencies.libcosmic]
 git = "https://github.com/pop-os/libcosmic.git"
 # See https://github.com/pop-os/libcosmic/blob/master/Cargo.toml for available features.
@@ -35,7 +39,8 @@ features = [
 	# Support creating additional application windows.
 	"multi-window",
 	# On app startup, focuses an existing instance if the app is already open
-	"single-instance",
+	# conflict with cosmic-files
+	# "single-instance",
 	# Uses tokio as the executor for the runtime
 	"tokio",
 	# Windowing support for X11, Windows, Mac, & Redox
