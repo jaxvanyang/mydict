@@ -1,4 +1,10 @@
-use std::collections::{BTreeMap, HashMap};
+use std::{
+	collections::{BTreeMap, HashMap},
+	path::{Path, PathBuf},
+};
+
+use anyhow::Ok;
+use odict::DictionaryReader;
 
 use crate::{elapsed_secs, now};
 
@@ -54,7 +60,7 @@ impl Trie {
 	}
 }
 
-struct Dictionary {
+pub struct Dictionary {
 	odict: odict::Dictionary,
 	trie: Trie,
 }
@@ -74,83 +80,85 @@ impl Dictionary {
 		}
 		tracing::info!(
 			"build trie for {} in {:.3}s",
-			odict.name.as_ref().unwrap(),
+			odict
+				.name
+				.as_ref()
+				.map_or("unknown".to_string(), Clone::clone),
 			elapsed_secs(&t0)
 		);
 		Self { odict, trie }
 	}
-}
 
-enum InnerDict {
-	DictFile(odict::DictionaryFile),
-	Dict(Dictionary),
+	/// # Errors
+	///
+	/// Will return `Err` if `path` or the file is not valid
+	pub fn read_from_path(path: &Path) -> anyhow::Result<Self> {
+		let reader = DictionaryReader::new();
+		let odict = reader.read_from_path(
+			path.to_str()
+				.ok_or(anyhow::anyhow!("path is not valid unicode: {path:?}"))?,
+		)?;
+		Ok(Self::new(odict.to_dictionary()?))
+	}
 }
 
 pub struct LazyDict {
-	inner: InnerDict,
-}
-
-impl From<odict::DictionaryFile> for LazyDict {
-	fn from(file: odict::DictionaryFile) -> Self {
-		Self {
-			inner: InnerDict::DictFile(file),
-		}
-	}
-}
-
-impl From<odict::Dictionary> for LazyDict {
-	fn from(dict: odict::Dictionary) -> Self {
-		Self {
-			inner: InnerDict::Dict(dict.into()),
-		}
-	}
+	pub path: PathBuf,
+	pub dict: Option<Dictionary>,
 }
 
 impl LazyDict {
-	fn lazy_load(&mut self) {
-		if let InnerDict::DictFile(file) = &self.inner {
+	#[must_use]
+	pub fn new(path: PathBuf) -> Self {
+		Self { path, dict: None }
+	}
+
+	/// # Errors
+	///
+	/// Will return `Err` if read dictionary from `self.path` failed
+	fn lazy_load(&mut self) -> anyhow::Result<()> {
+		if self.dict.is_none() {
 			let t0 = now();
-			let dict = file.to_dictionary().expect("ODict file valid");
-			let name = dict
-				.name
-				.as_ref()
-				.expect("dictionary should have a name")
-				.clone();
-			self.inner = InnerDict::Dict(dict.into());
-			tracing::info!("lazy load {} in {:.3}s", name, elapsed_secs(&t0));
+			self.dict = Some(Dictionary::read_from_path(&self.path)?);
+			tracing::info!("lazy load {:?} in {:.3}s", self.path, elapsed_secs(&t0));
+		}
+
+		Ok(())
+	}
+
+	/// # Errors
+	///
+	/// Will return `Err` if lazy load failed
+	pub fn search(&mut self, s: &str) -> anyhow::Result<Vec<String>> {
+		self.lazy_load()?;
+		match &self.dict {
+			Some(dict) => Ok(dict.trie.search(s)),
+			None => unreachable!(),
 		}
 	}
 
-	pub fn search(&mut self, s: &str) -> Vec<String> {
-		self.lazy_load();
-		match &self.inner {
-			InnerDict::Dict(dict) => dict.trie.search(s),
-			InnerDict::DictFile(_) => unreachable!(),
-		}
-	}
-
-	pub fn entries(&mut self) -> &HashMap<String, odict::Entry> {
-		self.lazy_load();
-		match &self.inner {
-			InnerDict::Dict(dict) => &dict.odict.entries,
-			InnerDict::DictFile(_) => unreachable!(),
+	/// # Errors
+	///
+	/// Will return `Err` if lazy load failed
+	pub fn entries(&mut self) -> anyhow::Result<&HashMap<String, odict::Entry>> {
+		self.lazy_load()?;
+		match &self.dict {
+			Some(dict) => Ok(&dict.odict.entries),
+			None => unreachable!(),
 		}
 	}
 
 	/// # Panics
 	///
-	/// Will panic if dictionary file not valid
+	/// Will panic if `self.path` is not valid
 	#[must_use]
-	pub fn name(&self) -> Option<String> {
-		match &self.inner {
-			InnerDict::Dict(dict) => dict.odict.name.clone(),
-			InnerDict::DictFile(file) => {
-				let dict = file.to_archive().expect("ODict file to archive error");
-				match &dict.name {
-					odict::ArchivedOption::None => None,
-					odict::ArchivedOption::Some(name) => Some(name.to_string()),
-				}
-			}
+	pub fn name(&self) -> String {
+		let stem = self.path.file_stem().unwrap().to_str().unwrap().to_owned();
+
+		if let Some(dict) = &self.dict {
+			dict.odict.name.clone().unwrap_or(stem)
+		} else {
+			stem
 		}
 	}
 }

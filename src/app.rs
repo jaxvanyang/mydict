@@ -20,9 +20,10 @@ use directories::ProjectDirs;
 use futures_util::SinkExt;
 use mydict::font::font_builder;
 use mydict::{LazyDict, elapsed_secs, now};
-use odict::{DefinitionType, DictionaryReader, Entry};
+use odict::{DefinitionType, Entry};
 use std::collections::HashMap;
 use std::fs;
+use std::path::PathBuf;
 
 const REPOSITORY: &str = env!("CARGO_PKG_REPOSITORY");
 const APP_ICON: &[u8] = include_bytes!("../resources/icons/hicolor/scalable/apps/icon.svg");
@@ -189,11 +190,7 @@ impl cosmic::Application for AppModel {
 		#[allow(clippy::from_iter_instead_of_collect)]
 		let dicts = scrollable::horizontal(widget::Row::from_iter(self.dicts.iter().enumerate().map(
 			|(i, d)| {
-				let name = d
-					.name()
-					.as_ref()
-					.expect("dictionary should have name")
-					.clone();
+				let name = d.name();
 				button::text(name).on_press(Message::SelectDict(i)).into()
 			},
 		)));
@@ -344,7 +341,7 @@ impl cosmic::Application for AppModel {
 
 		if let Some(dict) = self.dicts.get_mut(self.config.selected_dict) {
 			if let Some(s) = self.nav.text(id) {
-				self.dict_entry = Some(dict.entries()[s].clone());
+				self.dict_entry = Some(dict.entries().unwrap()[s].clone());
 			}
 		}
 
@@ -353,6 +350,8 @@ impl cosmic::Application for AppModel {
 }
 
 impl AppModel {
+	const APP_NAME: &'static str = "mydict";
+
 	/// The about page for this app.
 	#[allow(clippy::unused_self)]
 	pub fn about(&self) -> Element<Message> {
@@ -404,35 +403,31 @@ impl AppModel {
 		}
 	}
 
+	pub fn project_dirs() -> ProjectDirs {
+		ProjectDirs::from("", "", Self::APP_NAME).unwrap()
+	}
+
+	pub fn data_dir() -> PathBuf {
+		Self::project_dirs().data_dir().to_path_buf()
+	}
+
 	/// Load dictionaries.
 	pub fn load_dicts() -> Vec<LazyDict> {
-		// TODO: read name from metadata
-		let proj_dirs = ProjectDirs::from("", "", "mydict").unwrap();
-		let data_dir = proj_dirs.data_dir();
+		let data_dir = Self::data_dir();
 		if !data_dir.exists() {
-			fs::create_dir(data_dir).expect("created directory");
+			fs::create_dir(&data_dir).expect("created directory");
 		}
-		let reader = DictionaryReader::new();
-		// TODO: read by alphabetic order
+		// TODO: load by alphabetic order
 		let dicts: Vec<LazyDict> = data_dir
 			.read_dir()
 			.expect("read data directory")
 			.filter_map(|e| {
-				let path = e.expect("read data directory entry").path();
-				let path = path.to_str().expect("path should be unicode valid");
-				#[allow(clippy::case_sensitive_file_extension_comparisons)]
-				if path.ends_with(".odict") {
+				let path = e.ok()?.path();
+				if path.extension().is_some_and(|s| s == "odict") {
 					let t0 = now();
-					let file = reader.read_from_path(path).expect("ODict file exists");
-					if !(file.version.major == 2 && file.version.minor >= 5) {
-						tracing::info!(
-							"ODict file version not compatible: {}, expect ^2.5.0",
-							file.version
-						);
-						return None;
-					}
-					tracing::info!("loaded ODict {path} in {:.3}s", elapsed_secs(&t0));
-					Some(file.into())
+					let dict = LazyDict::new(path);
+					tracing::info!("loaded ODict {:?} in {:.3}s", dict.path, elapsed_secs(&t0));
+					Some(dict)
 				} else {
 					None
 				}
@@ -456,7 +451,7 @@ impl AppModel {
 		}
 
 		if let Some(dict) = self.dicts.get_mut(self.config.selected_dict) {
-			for (i, term) in dict.search(s).into_iter().take(1000).enumerate() {
+			for (i, term) in dict.search(s).unwrap().into_iter().take(1000).enumerate() {
 				let should_activate = i == 0 && term == s;
 				let item = self.nav.insert().text(term);
 				if should_activate {
@@ -464,7 +459,7 @@ impl AppModel {
 				}
 			}
 
-			self.dict_entry = dict.entries().get(s).cloned();
+			self.dict_entry = dict.entries().unwrap().get(s).cloned();
 			tracing::debug!(
 				"search \"{}\" in dict {} finished in {:.3}s",
 				s,
