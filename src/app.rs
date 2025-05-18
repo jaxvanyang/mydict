@@ -110,17 +110,16 @@ impl cosmic::Application for AppModel {
 			dict_entry: None,
 			dialog: None,
 		};
+
 		if !flags.is_empty() {
 			app.config
 				.set_search_term(&app.config_manager, flags)
 				.unwrap();
 		}
-		app.search();
 
 		tracing::info!("initialized in {:.3}s", t0.elapsed().as_secs_f32());
 
-		// Create a startup command that sets the window title.
-		let command = app.update_title();
+		let command = Task::batch(vec![app.search(), app.update_title()]);
 
 		(app, command)
 	}
@@ -273,16 +272,14 @@ impl cosmic::Application for AppModel {
 				self.config
 					.set_search_term(&self.config_manager, s)
 					.unwrap();
-				self.search();
-				return self.update_title();
+				return Task::batch(vec![self.search(), self.update_title()]);
 			}
 
 			Message::SearchClear => {
 				self.config
 					.set_search_term(&self.config_manager, String::new())
 					.unwrap();
-				self.search();
-				return self.update_title();
+				return Task::batch(vec![self.search(), self.update_title()]);
 			}
 
 			Message::SelectDict(i) => {
@@ -292,7 +289,7 @@ impl cosmic::Application for AppModel {
 				self.config
 					.set_selected_dict(&self.config_manager, i)
 					.unwrap();
-				self.search();
+				return self.search();
 			}
 
 			Message::ImportDictDialog => {
@@ -438,7 +435,7 @@ impl AppModel {
 	}
 
 	/// Search term in selected dictionary
-	fn search(&mut self) {
+	fn search(&mut self) -> Task<cosmic::Action<Message>> {
 		let _span = tracing::debug_span!("search").entered();
 		let t0 = now();
 
@@ -447,7 +444,7 @@ impl AppModel {
 		let s = self.config.search_term.trim();
 		if s.is_empty() {
 			self.dict_entry = None;
-			return;
+			return Task::none();
 		}
 
 		if let Some(dict) = self.dicts.get_mut(self.config.selected_dict) {
@@ -471,6 +468,8 @@ impl AppModel {
 			self.config.selected_dict = 0;
 			tracing::info!("reset selected_dict to 0");
 		}
+
+		Task::none()
 	}
 
 	/// Build term page from `ODict` entry
