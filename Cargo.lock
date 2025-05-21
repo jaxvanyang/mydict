@@ -1238,7 +1238,6 @@ dependencies = [
  "crossbeam-channel",
  "crossbeam-queue",
  "futures-util",
- "io-uring",
  "libc",
  "once_cell",
  "paste",
@@ -1500,7 +1499,7 @@ dependencies = [
 [[package]]
 name = "cosmic-files"
 version = "0.1.0"
-source = "git+https://github.com/pop-os/cosmic-files.git#63176a1e2a942c7d2f22999f93fc963e2f8039c3"
+source = "git+https://github.com/pop-os/cosmic-files.git#051001b9ea46d54e5387bf16384f7326636cd881"
 dependencies = [
  "chrono",
  "compio",
@@ -1526,6 +1525,7 @@ dependencies = [
  "once_cell",
  "open",
  "paste",
+ "procfs",
  "recently-used-xbel",
  "regex",
  "rust-embed",
@@ -1536,7 +1536,6 @@ dependencies = [
  "tempfile",
  "tokio",
  "trash",
- "unix_permissions_ext",
  "url",
  "uzers",
  "vergen",
@@ -3773,17 +3772,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "io-uring"
-version = "0.7.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab01638bb6a279897b7691f87f3f3c232451711fd419a69ced980ce61074fa46"
-dependencies = [
- "bitflags 2.9.0",
- "cfg-if",
- "libc",
-]
-
-[[package]]
 name = "is-docker"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5391,6 +5379,31 @@ dependencies = [
  "syn 2.0.100",
  "version_check",
  "yansi",
+]
+
+[[package]]
+name = "procfs"
+version = "0.17.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cc5b72d8145275d844d4b5f6d4e1eef00c8cd889edb6035c21675d1bb1f45c9f"
+dependencies = [
+ "bitflags 2.9.0",
+ "chrono",
+ "flate2",
+ "hex",
+ "procfs-core",
+ "rustix 0.38.44",
+]
+
+[[package]]
+name = "procfs-core"
+version = "0.17.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "239df02d8349b06fc07398a3a1697b06418223b1c7725085e801e7c0fc6a12ec"
+dependencies = [
+ "bitflags 2.9.0",
+ "chrono",
+ "hex",
 ]
 
 [[package]]
@@ -7037,12 +7050,6 @@ name = "unicode-xid"
 version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ebc1c04c71510c7f702b52b7c350734c9ff1295c464a03335b00bb84fc54f853"
-
-[[package]]
-name = "unix_permissions_ext"
-version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7497808a85e03f612f13e9c5061e4c81cdee86e6c00adfa1096690990ccd08e9"
 
 [[package]]
 name = "untrusted"
