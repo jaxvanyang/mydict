@@ -94,11 +94,11 @@ impl Dictionary {
 	/// Will return `Err` if `path` or the file is not valid
 	pub fn read_from_path(path: &Path) -> anyhow::Result<Self> {
 		let reader = DictionaryReader::new();
-		let odict = reader.read_from_path(
+		let dict_file = reader.read_from_path(
 			path.to_str()
 				.ok_or(anyhow::anyhow!("path is not valid unicode: {path:?}"))?,
 		)?;
-		Ok(Self::new(odict.to_dictionary()?))
+		Ok(Self::new(dict_file.to_dictionary()?))
 	}
 }
 

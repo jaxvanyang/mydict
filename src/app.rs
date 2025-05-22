@@ -56,6 +56,7 @@ pub enum Message {
 	UpdateConfig(Config),
 	LaunchUrl(String),
 	Search(String),
+	SearchResult(Vec<String>),
 	SearchClear,
 	SelectDict(usize),
 	UpdateDialog(DialogMessage),
@@ -275,6 +276,17 @@ impl cosmic::Application for AppModel {
 				return Task::batch(vec![self.search(), self.update_title()]);
 			}
 
+			Message::SearchResult(terms) => {
+				if terms.is_empty() {
+					return Task::none();
+				}
+				let mut iter = terms.into_iter();
+				self.nav.insert().text(iter.next().unwrap()).activate();
+				for term in iter {
+					self.nav.insert().text(term);
+				}
+			}
+
 			Message::SearchClear => {
 				self.config
 					.set_search_term(&self.config_manager, String::new())
@@ -448,14 +460,7 @@ impl AppModel {
 		}
 
 		if let Some(dict) = self.dicts.get_mut(self.config.selected_dict) {
-			for (i, term) in dict.search(s).unwrap().into_iter().take(1000).enumerate() {
-				let should_activate = i == 0 && term == s;
-				let item = self.nav.insert().text(term);
-				if should_activate {
-					item.activate();
-				}
-			}
-
+			let terms = dict.search(s).unwrap().into_iter().take(1000).collect();
 			self.dict_entry = dict.entries().unwrap().get(s).cloned();
 			tracing::debug!(
 				"search \"{}\" in dict {} finished in {:.3}s",
@@ -463,11 +468,13 @@ impl AppModel {
 				self.config.selected_dict,
 				elapsed_secs(&t0)
 			);
-		} else {
-			tracing::error!("selected_dict not valid: {}", self.config.selected_dict);
-			self.config.selected_dict = 0;
-			tracing::info!("reset selected_dict to 0");
+
+			return Task::done(Message::SearchResult(terms)).map(cosmic::Action::from);
 		}
+
+		tracing::error!("selected_dict not valid: {}", self.config.selected_dict);
+		self.config.selected_dict = 0;
+		tracing::info!("reset selected_dict to 0");
 
 		Task::none()
 	}
