@@ -2,9 +2,7 @@
 
 use std::env;
 
-mod app;
-mod config;
-mod i18n;
+use mydict::{app, i18n};
 
 fn main() -> cosmic::iced::Result {
 	tracing_subscriber::fmt::init();

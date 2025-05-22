@@ -2,6 +2,8 @@
 
 use crate::config::Config;
 use crate::fl;
+use crate::font::font_builder;
+use crate::{LazyDict, elapsed_secs, now};
 use cosmic::app::context_drawer;
 use cosmic::cosmic_config::{self, CosmicConfigEntry};
 use cosmic::iced::Length::{self};
@@ -18,8 +20,6 @@ use cosmic_files::dialog::{
 };
 use directories::ProjectDirs;
 use futures_util::SinkExt;
-use mydict::font::font_builder;
-use mydict::{LazyDict, elapsed_secs, now};
 use odict::{DefinitionType, Entry};
 use std::collections::HashMap;
 use std::fs;
