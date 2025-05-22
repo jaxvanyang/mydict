@@ -24,6 +24,7 @@ use odict::{DefinitionType, Entry};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
+use tracing::info;
 
 const REPOSITORY: &str = env!("CARGO_PKG_REPOSITORY");
 const APP_ICON: &[u8] = include_bytes!("../resources/icons/hicolor/scalable/apps/icon.svg");
@@ -350,7 +351,7 @@ impl cosmic::Application for AppModel {
 
 		if let Some(dict) = self.dicts.get_mut(self.config.selected_dict) {
 			if let Some(s) = self.nav.text(id) {
-				self.dict_entry = Some(dict.entries().unwrap()[s].clone());
+				self.dict_entry = dict.get(s).unwrap().cloned();
 			}
 		}
 
@@ -412,15 +413,26 @@ impl AppModel {
 		}
 	}
 
+	/// # Panics
+	///
+	/// Will panic if no valid home directory path could be retrieved
+	#[must_use]
 	pub fn project_dirs() -> ProjectDirs {
 		ProjectDirs::from("", "", Self::APP_NAME).unwrap()
 	}
 
+	#[must_use]
 	pub fn data_dir() -> PathBuf {
 		Self::project_dirs().data_dir().to_path_buf()
 	}
 
+	// TODO: move to lib
 	/// Load dictionaries.
+	///
+	/// # Panics
+	///
+	/// Will panic if file system error
+	#[must_use]
 	pub fn load_dicts() -> Vec<LazyDict> {
 		let data_dir = Self::data_dir();
 		if !data_dir.exists() {
@@ -435,7 +447,7 @@ impl AppModel {
 				if path.extension().is_some_and(|s| s == "odict") {
 					let t0 = now();
 					let dict = LazyDict::new(path);
-					tracing::info!("loaded ODict {:?} in {:.3}s", dict.path, elapsed_secs(&t0));
+					info!("loaded ODict {:?} in {:.3}s", dict.path, elapsed_secs(&t0));
 					Some(dict)
 				} else {
 					None
@@ -460,8 +472,12 @@ impl AppModel {
 		}
 
 		if let Some(dict) = self.dicts.get_mut(self.config.selected_dict) {
+			if !dict.is_loaded() {
+				dict.load().unwrap();
+			}
+
 			let terms = dict.search(s).unwrap().into_iter().take(1000).collect();
-			self.dict_entry = dict.entries().unwrap().get(s).cloned();
+			self.dict_entry = dict.get(s).unwrap().cloned();
 			tracing::debug!(
 				"search \"{}\" in dict {} finished in {:.3}s",
 				s,
