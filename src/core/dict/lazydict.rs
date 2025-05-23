@@ -1,11 +1,13 @@
+use tracing::warn;
+
 use super::Dictionary;
-use crate::{elapsed_secs, now};
 use std::path::PathBuf;
-use tracing::{info, warn};
 
 pub struct LazyDict {
 	pub path: PathBuf,
-	pub dictionary: Option<Dictionary>,
+	dictionary: Option<Dictionary>,
+	/// Used for sync
+	pub is_loading: bool,
 }
 
 impl LazyDict {
@@ -14,6 +16,7 @@ impl LazyDict {
 		Self {
 			path,
 			dictionary: None,
+			is_loading: false,
 		}
 	}
 
@@ -22,19 +25,11 @@ impl LazyDict {
 		self.dictionary.is_some()
 	}
 
-	/// # Errors
-	///
-	/// Will return `Err` if read dictionary from `self.path` failed
-	pub fn load(&mut self) -> anyhow::Result<()> {
+	pub fn load(&mut self, dictionary: Dictionary) {
 		if self.is_loaded() {
-			warn!("{:?} is already loaded, load again now", self.path);
+			warn!("dictionary {:?} is already loaded", self.path);
 		}
-
-		let t0 = now();
-		self.dictionary = Some(Dictionary::read_from_path(&self.path)?);
-		info!("load {:?} in {:.3}s", self.path, elapsed_secs(&t0));
-
-		Ok(())
+		self.dictionary = Some(dictionary);
 	}
 
 	/// # Errors

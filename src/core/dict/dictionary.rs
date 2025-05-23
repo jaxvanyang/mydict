@@ -1,17 +1,13 @@
 use super::Trie;
 use crate::{elapsed_secs, now};
 use std::path::Path;
+use tracing::info;
 
 /// Not useful on its own, you should use the `LazyDict`.
+#[derive(Debug, Clone)]
 pub struct Dictionary {
 	pub(crate) odict: odict::Dictionary,
 	pub(crate) trie: Trie,
-}
-
-impl From<odict::Dictionary> for Dictionary {
-	fn from(dict: odict::Dictionary) -> Self {
-		Self::new(dict)
-	}
 }
 
 impl Dictionary {
@@ -35,12 +31,22 @@ impl Dictionary {
 	/// # Errors
 	///
 	/// Will return `Err` if `path` or the file is not valid
-	pub fn read_from_path(path: &Path) -> anyhow::Result<Self> {
+	pub fn load_from_path(path: &Path) -> anyhow::Result<Self> {
+		let t0 = now();
 		let reader = odict::DictionaryReader::new();
 		let dict_file = reader.read_from_path(
 			path.to_str()
 				.ok_or(anyhow::anyhow!("path is not valid unicode: {path:?}"))?,
 		)?;
-		Ok(Self::new(dict_file.to_dictionary()?))
+		let dict = dict_file.to_dictionary()?.into();
+		info!("load {:?} in {:.3}s", path, elapsed_secs(&t0));
+
+		Ok(dict)
+	}
+}
+
+impl From<odict::Dictionary> for Dictionary {
+	fn from(dict: odict::Dictionary) -> Self {
+		Self::new(dict)
 	}
 }

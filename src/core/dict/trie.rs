@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Trie {
 	map: BTreeMap<u8, Trie>,
 	is_end: bool,

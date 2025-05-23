@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 
 use crate::config::Config;
-use crate::fl;
 use crate::font::font_builder;
+use crate::{Dictionary, fl};
 use crate::{LazyDict, elapsed_secs, now};
 use cosmic::app::context_drawer;
 use cosmic::cosmic_config::{self, CosmicConfigEntry};
@@ -24,7 +24,7 @@ use odict::{DefinitionType, Entry};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use tracing::info;
+use tracing::{debug, info};
 
 const REPOSITORY: &str = env!("CARGO_PKG_REPOSITORY");
 const APP_ICON: &[u8] = include_bytes!("../resources/icons/hicolor/scalable/apps/icon.svg");
@@ -56,9 +56,10 @@ pub enum Message {
 	ToggleContextPage(ContextPage),
 	UpdateConfig(Config),
 	LaunchUrl(String),
-	Search(String),
+	LoadDict((usize, Dictionary)),
+	ChangeSearch(String),
+	Search,
 	SearchResult(Vec<String>),
-	SearchClear,
 	SelectDict(usize),
 	UpdateDialog(DialogMessage),
 	ImportDictDialog,
@@ -108,7 +109,7 @@ impl cosmic::Application for AppModel {
 				}
 			},
 			config_manager,
-			dicts: Self::load_dicts(),
+			dicts: Self::init_dicts(),
 			dict_entry: None,
 			dialog: None,
 		};
@@ -121,7 +122,7 @@ impl cosmic::Application for AppModel {
 
 		tracing::info!("initialized in {:.3}s", t0.elapsed().as_secs_f32());
 
-		let command = Task::batch(vec![app.search(), app.update_title()]);
+		let command = app.load_dict();
 
 		(app, command)
 	}
@@ -149,8 +150,8 @@ impl cosmic::Application for AppModel {
 
 	fn header_center(&self) -> Vec<Element<Self::Message>> {
 		let search_input = widget::search_input("", &self.config.search_term)
-			.on_input(Message::Search)
-			.on_clear(Message::SearchClear)
+			.on_input(Message::ChangeSearch)
+			.on_clear(Message::ChangeSearch(String::new()))
 			.always_active();
 
 		vec![search_input.into()]
@@ -270,11 +271,27 @@ impl cosmic::Application for AppModel {
 				}
 			},
 
-			Message::Search(s) => {
+			Message::LoadDict((i, dict)) => {
+				self.dicts[i].load(dict);
+				self.dicts[i].is_loading = false;
+
+				return Task::done(Message::Search).map(cosmic::Action::from);
+			}
+
+			Message::ChangeSearch(s) => {
 				self.config
 					.set_search_term(&self.config_manager, s)
 					.unwrap();
-				return Task::batch(vec![self.search(), self.update_title()]);
+
+				return if self.selected_dict().is_loaded() {
+					self.search()
+				} else {
+					self.load_dict()
+				};
+			}
+
+			Message::Search => {
+				return self.search();
 			}
 
 			Message::SearchResult(terms) => {
@@ -286,23 +303,21 @@ impl cosmic::Application for AppModel {
 				for term in iter {
 					self.nav.insert().text(term);
 				}
-			}
 
-			Message::SearchClear => {
-				self.config
-					.set_search_term(&self.config_manager, String::new())
-					.unwrap();
-				return Task::batch(vec![self.search(), self.update_title()]);
+				return self.update_title();
 			}
 
 			Message::SelectDict(i) => {
-				if i == self.config.selected_dict {
+				if i == self.config.dict_index {
 					return Task::none();
 				}
-				self.config
-					.set_selected_dict(&self.config_manager, i)
-					.unwrap();
-				return self.search();
+				self.config.set_dict_index(&self.config_manager, i).unwrap();
+
+				return if self.selected_dict().is_loaded() {
+					self.search()
+				} else {
+					self.load_dict()
+				};
 			}
 
 			Message::ImportDictDialog => {
@@ -349,7 +364,7 @@ impl cosmic::Application for AppModel {
 		// Activate the page in the model.
 		self.nav.activate(id);
 
-		if let Some(dict) = self.dicts.get_mut(self.config.selected_dict) {
+		if let Some(dict) = self.dicts.get_mut(self.config.dict_index) {
 			if let Some(s) = self.nav.text(id) {
 				self.dict_entry = dict.get(s).unwrap().cloned();
 			}
@@ -413,6 +428,28 @@ impl AppModel {
 		}
 	}
 
+	/// Load selected dictionary.
+	///
+	/// # Panics
+	///
+	/// Will panic if load dictionary failed.
+	pub fn load_dict(&mut self) -> Task<cosmic::Action<Message>> {
+		let index = self.config.dict_index;
+		let selected_dict = &mut self.dicts[index];
+		let path = selected_dict.path.clone();
+
+		if selected_dict.is_loading {
+			debug!("selected dictionary is loading, ignore load request");
+			return Task::none();
+		}
+		selected_dict.is_loading = true;
+
+		Task::future(async move {
+			Message::LoadDict((index, Dictionary::load_from_path(&path).unwrap()))
+		})
+		.map(cosmic::Action::from)
+	}
+
 	/// # Panics
 	///
 	/// Will panic if no valid home directory path could be retrieved
@@ -426,14 +463,18 @@ impl AppModel {
 		Self::project_dirs().data_dir().to_path_buf()
 	}
 
+	pub fn selected_dict(&self) -> &LazyDict {
+		&self.dicts[self.config.dict_index]
+	}
+
 	// TODO: move to lib
-	/// Load dictionaries.
+	/// Initialize dictionaries.
 	///
 	/// # Panics
 	///
 	/// Will panic if file system error
 	#[must_use]
-	pub fn load_dicts() -> Vec<LazyDict> {
+	pub fn init_dicts() -> Vec<LazyDict> {
 		let data_dir = Self::data_dir();
 		if !data_dir.exists() {
 			fs::create_dir(&data_dir).expect("created directory");
@@ -471,28 +512,24 @@ impl AppModel {
 			return Task::none();
 		}
 
-		if let Some(dict) = self.dicts.get_mut(self.config.selected_dict) {
-			if !dict.is_loaded() {
-				dict.load().unwrap();
-			}
-
+		if let Some(dict) = self.dicts.get_mut(self.config.dict_index) {
 			let terms = dict.search(s).unwrap().into_iter().take(1000).collect();
 			self.dict_entry = dict.get(s).unwrap().cloned();
 			tracing::debug!(
 				"search \"{}\" in dict {} finished in {:.3}s",
 				s,
-				self.config.selected_dict,
+				self.config.dict_index,
 				elapsed_secs(&t0)
 			);
 
 			return Task::done(Message::SearchResult(terms)).map(cosmic::Action::from);
 		}
 
-		tracing::error!("selected_dict not valid: {}", self.config.selected_dict);
-		self.config.selected_dict = 0;
-		tracing::info!("reset selected_dict to 0");
+		tracing::error!("dict_index not valid: {}", self.config.dict_index);
+		self.config.dict_index = 0;
+		tracing::info!("reset dict_index to 0");
 
-		Task::none()
+		self.update_title()
 	}
 
 	/// Build term page from `ODict` entry
@@ -580,7 +617,10 @@ impl AppModel {
 			}
 		} else {
 			page = page.push(
-				text::title1(if self.config.search_term.is_empty() {
+				// FIXME: change selected dictionary doesn't show loading
+				text::title1(if self.selected_dict().is_loading {
+					"Loading..."
+				} else if self.dict_entry.is_none() {
 					"Type to search"
 				} else {
 					"Search not found"
