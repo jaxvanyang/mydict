@@ -283,10 +283,15 @@ impl cosmic::Application for AppModel {
 					.set_search_term(&self.config_manager, s)
 					.unwrap();
 
-				return if self.selected_dict().is_loaded() {
-					self.search()
-				} else {
-					self.load_dict()
+				match self.selected_dict() {
+					Some(dict) => {
+						return if dict.is_loaded() {
+							self.search()
+						} else {
+							self.load_dict()
+						};
+					}
+					None => (),
 				};
 			}
 
@@ -313,7 +318,7 @@ impl cosmic::Application for AppModel {
 				}
 				self.config.set_dict_index(&self.config_manager, i).unwrap();
 
-				return if self.selected_dict().is_loaded() {
+				return if self.selected_dict().unwrap().is_loaded() {
 					self.search()
 				} else {
 					self.load_dict()
@@ -349,9 +354,8 @@ impl cosmic::Application for AppModel {
 				self.dialog = None;
 				match result {
 					DialogResult::Cancel => (),
-					DialogResult::Open(path_bufs) => {
-						// TODO: import ODict file
-						dbg!(path_bufs);
+					DialogResult::Open(_path_bufs) => {
+						todo!("popup show progress");
 					}
 				}
 			}
@@ -435,6 +439,10 @@ impl AppModel {
 	/// Will panic if load dictionary failed.
 	pub fn load_dict(&mut self) -> Task<cosmic::Action<Message>> {
 		let index = self.config.dict_index;
+		if self.dicts.len() <= index {
+			debug!("no dictionary found");
+			return Task::none();
+		}
 		let selected_dict = &mut self.dicts[index];
 		let path = selected_dict.path.clone();
 
@@ -463,8 +471,8 @@ impl AppModel {
 		Self::project_dirs().data_dir().to_path_buf()
 	}
 
-	pub fn selected_dict(&self) -> &LazyDict {
-		&self.dicts[self.config.dict_index]
+	pub fn selected_dict(&self) -> Option<&LazyDict> {
+		self.dicts.get(self.config.dict_index)
 	}
 
 	// TODO: move to lib
@@ -618,12 +626,17 @@ impl AppModel {
 		} else {
 			page = page.push(
 				// FIXME: change selected dictionary doesn't show loading
-				text::title1(if self.selected_dict().is_loading {
-					"Loading..."
-				} else if self.dict_entry.is_none() {
-					"Type to search"
-				} else {
-					"Search not found"
+				text::title1(match self.selected_dict() {
+					None => "no dictionary found, please import one",
+					Some(dict) => {
+						if dict.is_loading {
+							"Loading..."
+						} else if self.dict_entry.is_none() {
+							"Type to search"
+						} else {
+							"Search not found"
+						}
+					}
 				})
 				.width(Length::Fill)
 				.align_x(Alignment::Center),
