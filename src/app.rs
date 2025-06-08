@@ -6,6 +6,7 @@ use crate::{Dictionary, fl};
 use crate::{LazyDict, elapsed_secs, now};
 use cosmic::app::context_drawer;
 use cosmic::cosmic_config::{self, CosmicConfigEntry};
+use cosmic::dialog::file_chooser::{self, FileFilter};
 use cosmic::iced::Length::{self};
 use cosmic::iced::{Alignment, Subscription, window};
 use cosmic::iced_widget::{column, horizontal_rule};
@@ -15,16 +16,15 @@ use cosmic::{
 	cosmic_theme::{self},
 	theme,
 };
-use cosmic_files::dialog::{
-	Dialog, DialogFilter, DialogFilterPattern, DialogKind, DialogMessage, DialogResult,
-};
 use directories::ProjectDirs;
 use futures_util::SinkExt;
 use odict::{DefinitionType, Entry};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use tracing::{debug, info};
+use std::sync::Arc;
+use tracing::{debug, error, info};
+use url::Url;
 
 const REPOSITORY: &str = env!("CARGO_PKG_REPOSITORY");
 const APP_ICON: &[u8] = include_bytes!("../resources/icons/hicolor/scalable/apps/icon.svg");
@@ -45,7 +45,6 @@ pub struct AppModel {
 	config_manager: cosmic_config::Config,
 	dicts: Vec<LazyDict>,
 	dict_entry: Option<Entry>,
-	dialog: Option<Dialog<Message>>,
 }
 
 /// Messages emitted by the application and its widgets.
@@ -61,9 +60,12 @@ pub enum Message {
 	Search,
 	SearchResult(Vec<String>),
 	SelectDict(usize),
-	UpdateDialog(DialogMessage),
-	ImportDictDialog,
-	ImportDictResult(DialogResult),
+
+	// messages for import
+	OpenImportDialog,
+	DictFileSelected(Url),
+	ImportCancelled,
+	OpenFileError(Arc<file_chooser::Error>),
 }
 
 /// Create a COSMIC application from the app model
@@ -111,7 +113,6 @@ impl cosmic::Application for AppModel {
 			config_manager,
 			dicts: Self::init_dicts(),
 			dict_entry: None,
-			dialog: None,
 		};
 
 		if !flags.is_empty() {
@@ -177,11 +178,8 @@ impl cosmic::Application for AppModel {
 		})
 	}
 
-	fn view_window(&self, window_id: window::Id) -> Element<Self::Message> {
-		match &self.dialog {
-			Some(dialog) => dialog.view(window_id),
-			None => widget::text("Unknown window ID").into(),
-		}
+	fn view_window(&self, _window_id: window::Id) -> Element<Self::Message> {
+		widget::text("Unknown window ID").into()
 	}
 
 	/// Describes the interface based on the current state of the application model.
@@ -283,16 +281,13 @@ impl cosmic::Application for AppModel {
 					.set_search_term(&self.config_manager, s)
 					.unwrap();
 
-				match self.selected_dict() {
-					Some(dict) => {
-						return if dict.is_loaded() {
-							self.search()
-						} else {
-							self.load_dict()
-						};
-					}
-					None => (),
-				};
+				if let Some(dict) = self.selected_dict() {
+					return if dict.is_loaded() {
+						self.search()
+					} else {
+						self.load_dict()
+					};
+				}
 			}
 
 			Message::Search => {
@@ -325,40 +320,39 @@ impl cosmic::Application for AppModel {
 				};
 			}
 
-			Message::ImportDictDialog => {
-				if self.dialog.is_none() {
-					let (mut dialog, command) = Dialog::new(
-						DialogKind::OpenFile,
-						None,
-						Message::UpdateDialog,
-						Message::ImportDictResult,
-					);
-					let filter = DialogFilter {
-						label: "ODict".to_string(),
-						patterns: vec![DialogFilterPattern::Glob("*.odict".to_string())],
-					};
-					let set_filter = dialog.set_filters([filter], Some(0));
+			Message::OpenImportDialog => {
+				return cosmic::task::future(async move {
+					info!("opening new dialog");
 
-					self.dialog = Some(dialog);
-					return Task::batch([set_filter, command]);
-				}
-			}
+					#[cfg(feature = "rfd")]
+					let filter = FileFilter::new("ODict files").extension("odict");
 
-			Message::UpdateDialog(msg) => {
-				if let Some(dialog) = &mut self.dialog {
-					return dialog.update(msg);
-				}
-			}
+					#[cfg(feature = "xdg-portal")]
+					let filter = FileFilter::new("ODict files").glob("*.odict");
 
-			Message::ImportDictResult(result) => {
-				self.dialog = None;
-				match result {
-					DialogResult::Cancel => (),
-					DialogResult::Open(_path_bufs) => {
-						todo!("popup show progress");
+					let dialog = file_chooser::open::Dialog::new()
+						// Sets title of the dialog window.
+						.title("Choose a file")
+						// Accept only plain text files
+						.filter(filter);
+
+					match dialog.open_file().await {
+						Ok(response) => Message::DictFileSelected(response.url().to_owned()),
+
+						Err(file_chooser::Error::Cancelled) => Message::ImportCancelled,
+
+						Err(err) => Message::OpenFileError(Arc::new(err)),
 					}
-				}
+				});
 			}
+
+			Message::DictFileSelected(url) => {
+				info!("selected file: {url}");
+				todo!("pop up import window");
+			}
+
+			Message::ImportCancelled => info!("import cancelled"),
+			Message::OpenFileError(err) => error!("open file error: {err}"),
 		}
 		Task::none()
 	}
@@ -471,6 +465,7 @@ impl AppModel {
 		Self::project_dirs().data_dir().to_path_buf()
 	}
 
+	#[must_use]
 	pub fn selected_dict(&self) -> Option<&LazyDict> {
 		self.dicts.get(self.config.dict_index)
 	}
@@ -666,7 +661,7 @@ impl menu::action::MenuAction for MenuAction {
 	fn message(&self) -> Self::Message {
 		match self {
 			MenuAction::About => Message::ToggleContextPage(ContextPage::About),
-			MenuAction::Import => Message::ImportDictDialog,
+			MenuAction::Import => Message::OpenImportDialog,
 		}
 	}
 }

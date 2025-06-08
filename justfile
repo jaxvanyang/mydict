@@ -49,7 +49,7 @@ build-vendored *args: vendor-extract (build-release '--frozen --offline' args)
 
 # Runs a clippy check
 check *args:
-    cargo clippy --all-features {{args}} -- -W clippy::pedantic
+    cargo clippy {{args}} -- -W clippy::pedantic
 
 # Runs a clippy check with JSON message format
 check-json: (check '--message-format=json')
@@ -93,4 +93,3 @@ vendor:
 vendor-extract:
     rm -rf vendor
     tar pxf vendor.tar
-
