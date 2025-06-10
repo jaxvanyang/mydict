@@ -14,8 +14,8 @@ impl Dictionary {
 	pub fn new(odict: odict::Dictionary) -> Self {
 		let t0 = now();
 		let mut trie = Trie::new();
-		for term in odict.entries.keys() {
-			trie.insert(term);
+		for entry in &odict.entries {
+			trie.insert(&entry.term);
 		}
 		tracing::info!(
 			"build trie for {} in {:.3}s",

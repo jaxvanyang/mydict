@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: MIT
 
 pub mod tasks;
+pub mod utils;
 
 pub use tasks::*;
+pub use utils::*;
 
 use crate::config::Config;
 use crate::font::font_builder;
@@ -24,7 +26,6 @@ use directories::ProjectDirs;
 use futures_util::SinkExt;
 use odict::{DefinitionType, Entry};
 use std::collections::HashMap;
-use std::fs;
 use std::path::PathBuf;
 use tracing::{debug, debug_span, error, info, info_span};
 use url::Url;
@@ -59,18 +60,20 @@ pub enum Message {
 	ToggleContextPage(ContextPage),
 	UpdateConfig(Config),
 	LaunchUrl(String),
-	LoadDict((usize, Dictionary)),
 	ChangeSearch(String),
 	Search,
 	SearchResult(Vec<String>),
-	SelectDict(usize),
-
 	// messages for import
 	OpenImportDialog,
 	DictFileSelected(Url),
 	ImportCancelled,
 	ImportError(String),
 	ODictCopied(odict::Dictionary, PathBuf),
+	// messages for load
+	SelectDict(usize),
+	LoadDict((usize, Dictionary)),
+	LoadError(String),
+	DictNotCompatible((usize, (u64, u64, u64))),
 }
 
 /// Create a COSMIC application from the app model
@@ -116,7 +119,7 @@ impl cosmic::Application for AppModel {
 				}
 			},
 			config_manager,
-			dicts: Self::init_dicts(),
+			dicts: init_app_dicts().unwrap(),
 			dict_entry: None,
 			selected_dict_url: None,
 		};
@@ -127,9 +130,9 @@ impl cosmic::Application for AppModel {
 				.unwrap();
 		}
 
-		info!("initialized in {:.3}s", t0.elapsed().as_secs_f32());
+		info!("initialized in {:.3}s", elapsed_secs(&t0));
 
-		let command = app.load_dict();
+		let command = app.load_selected_dict();
 
 		(app, command)
 	}
@@ -250,8 +253,10 @@ impl cosmic::Application for AppModel {
 	///
 	/// Tasks may be returned for asynchronous execution of code in the background
 	/// on the application's async runtime.
+	#[allow(clippy::too_many_lines)]
 	fn update(&mut self, message: Self::Message) -> Task<cosmic::Action<Self::Message>> {
 		match message {
+			Message::LoadError(msg) => error!("load dictionary error: {msg}"),
 			Message::OpenRepositoryUrl => {
 				_ = open::that_detached(REPOSITORY);
 			}
@@ -268,19 +273,15 @@ impl cosmic::Application for AppModel {
 					self.core.window.show_context = true;
 				}
 			}
-			Message::UpdateConfig(config) => {
-				self.config = config;
-			}
-			Message::LaunchUrl(url) => match open::that_detached(&url) {
-				Ok(()) => {}
-				Err(err) => {
+			Message::UpdateConfig(config) => self.config = config,
+			Message::LaunchUrl(url) => {
+				if let Err(err) = open::that_detached(&url) {
 					error!("failed to open {url:?}: {err}");
 				}
-			},
+			}
 			Message::LoadDict((i, dict)) => {
 				self.dicts[i].load(dict);
 				self.dicts[i].is_loading = false;
-
 				return Task::done(Message::Search).map(cosmic::Action::from);
 			}
 			Message::ChangeSearch(s) => {
@@ -292,13 +293,11 @@ impl cosmic::Application for AppModel {
 					return if dict.is_loaded() {
 						self.search()
 					} else {
-						self.load_dict()
+						self.load_selected_dict()
 					};
 				}
 			}
-			Message::Search => {
-				return self.search();
-			}
+			Message::Search => return self.search(),
 			Message::SearchResult(terms) => {
 				if terms.is_empty() {
 					return Task::none();
@@ -308,19 +307,20 @@ impl cosmic::Application for AppModel {
 				for term in iter {
 					self.nav.insert().text(term);
 				}
-
 				return self.update_title();
 			}
 			Message::SelectDict(i) => {
-				if i == self.config.dict_index {
+				if i == self.config.selected_index {
 					return Task::none();
 				}
-				self.config.set_dict_index(&self.config_manager, i).unwrap();
+				self.config
+					.set_selected_index(&self.config_manager, i)
+					.unwrap();
 
 				return if self.selected_dict().unwrap().is_loaded() {
 					self.search()
 				} else {
-					self.load_dict()
+					self.load_selected_dict()
 				};
 			}
 			Message::OpenImportDialog => {
@@ -347,7 +347,6 @@ impl cosmic::Application for AppModel {
 			Message::DictFileSelected(url) => {
 				info!("selected file: {url}");
 				self.selected_dict_url = Some(url.clone());
-
 				return create_import_task(url);
 			}
 			Message::ImportCancelled => info!("import cancelled"),
@@ -361,6 +360,10 @@ impl cosmic::Application for AppModel {
 				self.dicts.push(dict);
 				self.selected_dict_url = None;
 			}
+			Message::DictNotCompatible((index, (major, minor, patch))) => {
+				error!("dict {index} file version not compatible: {major}.{minor}.{patch}");
+				self.dicts.remove(index);
+			}
 		}
 		Task::none()
 	}
@@ -370,7 +373,7 @@ impl cosmic::Application for AppModel {
 		// Activate the page in the model.
 		self.nav.activate(id);
 
-		if let Some(dict) = self.dicts.get_mut(self.config.dict_index) {
+		if let Some(dict) = self.dicts.get_mut(self.config.selected_index) {
 			if let Some(s) = self.nav.text(id) {
 				self.dict_entry = dict.get(s).unwrap().cloned();
 			}
@@ -439,25 +442,26 @@ impl AppModel {
 	/// # Panics
 	///
 	/// Will panic if load dictionary failed.
-	pub fn load_dict(&mut self) -> Task<cosmic::Action<Message>> {
-		let index = self.config.dict_index;
-		if self.dicts.len() <= index {
-			debug!("no dictionary found");
+	pub fn load_selected_dict(&mut self) -> Task<cosmic::Action<Message>> {
+		self.correct_selected_index();
+
+		let index = self.config.selected_index;
+		let Some(selected_dict) = self.dicts.get_mut(index) else {
+			info!(
+				"selected index ({}) out of range, dicts size: {}",
+				index,
+				self.dicts.len()
+			);
 			return Task::none();
-		}
-		let selected_dict = &mut self.dicts[index];
-		let path = selected_dict.path.clone();
+		};
 
 		if selected_dict.is_loading {
-			debug!("selected dictionary is loading, ignore load request");
+			info!("selected dictionary is loading, ignore load request");
 			return Task::none();
 		}
 		selected_dict.is_loading = true;
 
-		Task::future(async move {
-			Message::LoadDict((index, Dictionary::load_from_path(&path).unwrap()))
-		})
-		.map(cosmic::Action::from)
+		create_load_task(index, selected_dict.path.clone())
 	}
 
 	/// # Panics
@@ -475,39 +479,19 @@ impl AppModel {
 
 	#[must_use]
 	pub fn selected_dict(&self) -> Option<&LazyDict> {
-		self.dicts.get(self.config.dict_index)
+		self.dicts.get(self.config.selected_index)
 	}
 
-	// TODO: move to lib
-	/// Initialize dictionaries.
-	///
 	/// # Panics
 	///
-	/// Will panic if file system error
-	#[must_use]
-	pub fn init_dicts() -> Vec<LazyDict> {
-		let data_dir = Self::data_dir();
-		if !data_dir.exists() {
-			fs::create_dir(&data_dir).expect("created directory");
+	/// Will panic if config update failed.
+	pub fn correct_selected_index(&mut self) {
+		if self.dicts.len() <= self.config.selected_index {
+			info!("reset selected dict index to 0, because there are not enough dicts");
+			self.config
+				.set_selected_index(&self.config_manager, 0)
+				.unwrap();
 		}
-		// TODO: load by alphabetic order
-		let dicts: Vec<LazyDict> = data_dir
-			.read_dir()
-			.expect("read data directory")
-			.filter_map(|e| {
-				let path = e.ok()?.path();
-				if path.extension().is_some_and(|s| s == "odict") {
-					let t0 = now();
-					let dict = LazyDict::new(path);
-					info!("loaded ODict {:?} in {:.3}s", dict.path, elapsed_secs(&t0));
-					Some(dict)
-				} else {
-					None
-				}
-			})
-			.collect();
-
-		dicts
 	}
 
 	/// Search term in selected dictionary
@@ -523,21 +507,21 @@ impl AppModel {
 			return Task::none();
 		}
 
-		if let Some(dict) = self.dicts.get_mut(self.config.dict_index) {
+		if let Some(dict) = self.dicts.get_mut(self.config.selected_index) {
 			let terms = dict.search(s).unwrap().into_iter().take(1000).collect();
 			self.dict_entry = dict.get(s).unwrap().cloned();
 			debug!(
 				"search \"{}\" in dict {} finished in {:.3}s",
 				s,
-				self.config.dict_index,
+				self.config.selected_index,
 				elapsed_secs(&t0)
 			);
 
 			return Task::done(Message::SearchResult(terms)).map(cosmic::Action::from);
 		}
 
-		error!("dict_index not valid: {}", self.config.dict_index);
-		self.config.dict_index = 0;
+		error!("dict_index not valid: {}", self.config.selected_index);
+		self.config.selected_index = 0;
 		info!("reset dict_index to 0");
 
 		self.update_title()
@@ -560,9 +544,10 @@ impl AppModel {
 						page = page.push(p);
 					}
 				}
-				for (pos, sense) in &ety.senses {
+				for sense in &ety.senses {
 					page = page.push(
-						text::body(pos.description()).font(font_builder().italic().bold().build()),
+						text::body(sense.pos.to_string())
+							.font(font_builder().italic().bold().build()),
 					);
 					for (j, def) in sense.definitions.iter().enumerate() {
 						let alphabetic_numbering = |i| (b'a' + u8::try_from(i).unwrap()) as char;

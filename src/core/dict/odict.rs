@@ -1,9 +1,14 @@
+use crate::{app::AppModel, elapsed_secs, now};
 use std::path::{Path, PathBuf};
-
 use tracing::{info, info_span};
 use url::Url;
 
-use crate::{app::AppModel, now};
+pub const SUPPORTED_ODICT_VERSION: (u64, u64) = (2, 8);
+
+#[must_use]
+pub fn is_odict_file_compatible(file: &odict::DictionaryFile) -> bool {
+	(file.version.major, file.version.minor) == SUPPORTED_ODICT_VERSION
+}
 
 /// # Errors
 ///
@@ -22,9 +27,9 @@ pub fn read_odict_file_from_path(path: &Path) -> anyhow::Result<odict::Dictionar
 /// Will return `Err` if file format not valid or version not compatible
 pub fn read_odict_from_path(path: &Path) -> anyhow::Result<odict::Dictionary> {
 	let odict_file = read_odict_file_from_path(path)?;
-	if (odict_file.version.major, odict_file.version.minor) != (2, 5) {
+	if !is_odict_file_compatible(&odict_file) {
 		anyhow::bail!(
-			"require ODict version ~2.5.0, but found {}",
+			"require ODict version ~{SUPPORTED_ODICT_VERSION:?}, but found {}",
 			odict_file.version
 		)
 	}
@@ -68,12 +73,12 @@ pub async fn import_odict(url: &Url) -> anyhow::Result<(odict::Dictionary, PathB
 		AppModel::data_dir().join(format!("{}.odict", name.replace(['/', '\\'], "|")))
 	} else {
 		let name = path
-			.file_name()
+			.file_stem()
 			.ok_or(anyhow::anyhow!("path not valid: {}", path.display()))?
 			.to_string_lossy()
 			.to_string();
 		odict.name = Some(name.clone());
-		AppModel::data_dir().join(name)
+		AppModel::data_dir().join(format!("{name}.odict"))
 	};
 
 	if target_path.exists() {
@@ -83,7 +88,7 @@ pub async fn import_odict(url: &Url) -> anyhow::Result<(odict::Dictionary, PathB
 	info!("writing ODict to {target_path:?}...");
 	write_odict_to_path(&odict, &target_path)?;
 
-	info!("import used {:.3}s", t0.elapsed().as_secs_f32());
+	info!("import used {:.3}s", elapsed_secs(&t0));
 
 	Ok((odict, target_path))
 }
