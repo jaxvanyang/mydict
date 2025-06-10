@@ -1,4 +1,4 @@
-use super::Trie;
+use super::{Trie, read_odict_from_path};
 use crate::{elapsed_secs, now};
 use std::path::Path;
 use tracing::info;
@@ -33,12 +33,7 @@ impl Dictionary {
 	/// Will return `Err` if `path` or the file is not valid
 	pub fn load_from_path(path: &Path) -> anyhow::Result<Self> {
 		let t0 = now();
-		let reader = odict::DictionaryReader::new();
-		let dict_file = reader.read_from_path(
-			path.to_str()
-				.ok_or(anyhow::anyhow!("path is not valid unicode: {path:?}"))?,
-		)?;
-		let dict = dict_file.to_dictionary()?.into();
+		let dict = read_odict_from_path(path)?.into();
 		info!("load {:?} in {:.3}s", path, elapsed_secs(&t0));
 
 		Ok(dict)

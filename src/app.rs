@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: MIT
 
+pub mod tasks;
+
+pub use tasks::*;
+
 use crate::config::Config;
 use crate::font::font_builder;
 use crate::{Dictionary, fl};
@@ -22,8 +26,7 @@ use odict::{DefinitionType, Entry};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use std::sync::Arc;
-use tracing::{debug, error, info};
+use tracing::{debug, debug_span, error, info, info_span};
 use url::Url;
 
 const REPOSITORY: &str = env!("CARGO_PKG_REPOSITORY");
@@ -45,6 +48,7 @@ pub struct AppModel {
 	config_manager: cosmic_config::Config,
 	dicts: Vec<LazyDict>,
 	dict_entry: Option<Entry>,
+	selected_dict_url: Option<Url>,
 }
 
 /// Messages emitted by the application and its widgets.
@@ -65,7 +69,8 @@ pub enum Message {
 	OpenImportDialog,
 	DictFileSelected(Url),
 	ImportCancelled,
-	OpenFileError(Arc<file_chooser::Error>),
+	ImportError(String),
+	ODictCopied(odict::Dictionary, PathBuf),
 }
 
 /// Create a COSMIC application from the app model
@@ -91,7 +96,7 @@ impl cosmic::Application for AppModel {
 	}
 
 	fn init(core: cosmic::Core, flags: Self::Flags) -> (Self, Task<cosmic::Action<Self::Message>>) {
-		let _span = tracing::info_span!("init").entered();
+		let _span = info_span!("init").entered();
 		let t0 = now();
 		let config_manager = cosmic_config::Config::new(Self::APP_ID, Config::VERSION).unwrap();
 
@@ -104,7 +109,7 @@ impl cosmic::Application for AppModel {
 				Ok(config) => config,
 				Err((errors, config)) => {
 					for why in errors {
-						tracing::error!(%why, "error loading app config");
+						error!(%why, "error loading app config");
 					}
 
 					config
@@ -113,6 +118,7 @@ impl cosmic::Application for AppModel {
 			config_manager,
 			dicts: Self::init_dicts(),
 			dict_entry: None,
+			selected_dict_url: None,
 		};
 
 		if !flags.is_empty() {
@@ -121,7 +127,7 @@ impl cosmic::Application for AppModel {
 				.unwrap();
 		}
 
-		tracing::info!("initialized in {:.3}s", t0.elapsed().as_secs_f32());
+		info!("initialized in {:.3}s", t0.elapsed().as_secs_f32());
 
 		let command = app.load_dict();
 
@@ -197,8 +203,15 @@ impl cosmic::Application for AppModel {
 
 		// TODO: use custom widget
 		let term_page = scrollable(self.build_term_page().padding(10));
+		let content = column![dicts, term_page].spacing(5);
+		let mut content = widget::popover(content).modal(true);
 
-		column![dicts, term_page].spacing(5).into()
+		if let Some(url) = &self.selected_dict_url {
+			let dialog = widget::dialog().body(format!("Importing {url}, please wait."));
+			content = content.popup(dialog);
+		}
+
+		content.into()
 	}
 
 	/// Register subscriptions for this application.
@@ -225,7 +238,7 @@ impl cosmic::Application for AppModel {
 				.watch_config::<Config>(Self::APP_ID)
 				.map(|update| {
 					for why in update.errors {
-						tracing::error!(?why, "app config error");
+						error!(?why, "app config error");
 					}
 
 					Message::UpdateConfig(update.config)
@@ -242,11 +255,9 @@ impl cosmic::Application for AppModel {
 			Message::OpenRepositoryUrl => {
 				_ = open::that_detached(REPOSITORY);
 			}
-
 			Message::SubscriptionChannel => {
 				// For example purposes only.
 			}
-
 			Message::ToggleContextPage(context_page) => {
 				if self.context_page == context_page {
 					// Close the context drawer if the toggled context page is the same.
@@ -257,25 +268,21 @@ impl cosmic::Application for AppModel {
 					self.core.window.show_context = true;
 				}
 			}
-
 			Message::UpdateConfig(config) => {
 				self.config = config;
 			}
-
 			Message::LaunchUrl(url) => match open::that_detached(&url) {
 				Ok(()) => {}
 				Err(err) => {
-					tracing::error!("failed to open {url:?}: {err}");
+					error!("failed to open {url:?}: {err}");
 				}
 			},
-
 			Message::LoadDict((i, dict)) => {
 				self.dicts[i].load(dict);
 				self.dicts[i].is_loading = false;
 
 				return Task::done(Message::Search).map(cosmic::Action::from);
 			}
-
 			Message::ChangeSearch(s) => {
 				self.config
 					.set_search_term(&self.config_manager, s)
@@ -289,11 +296,9 @@ impl cosmic::Application for AppModel {
 					};
 				}
 			}
-
 			Message::Search => {
 				return self.search();
 			}
-
 			Message::SearchResult(terms) => {
 				if terms.is_empty() {
 					return Task::none();
@@ -306,7 +311,6 @@ impl cosmic::Application for AppModel {
 
 				return self.update_title();
 			}
-
 			Message::SelectDict(i) => {
 				if i == self.config.dict_index {
 					return Task::none();
@@ -319,7 +323,6 @@ impl cosmic::Application for AppModel {
 					self.load_dict()
 				};
 			}
-
 			Message::OpenImportDialog => {
 				return cosmic::task::future(async move {
 					info!("opening new dialog");
@@ -331,28 +334,33 @@ impl cosmic::Application for AppModel {
 					let filter = FileFilter::new("ODict files").glob("*.odict");
 
 					let dialog = file_chooser::open::Dialog::new()
-						// Sets title of the dialog window.
 						.title("Choose a file")
-						// Accept only plain text files
 						.filter(filter);
 
 					match dialog.open_file().await {
 						Ok(response) => Message::DictFileSelected(response.url().to_owned()),
-
 						Err(file_chooser::Error::Cancelled) => Message::ImportCancelled,
-
-						Err(err) => Message::OpenFileError(Arc::new(err)),
+						Err(err) => Message::ImportError(err.to_string()),
 					}
 				});
 			}
-
 			Message::DictFileSelected(url) => {
 				info!("selected file: {url}");
-				todo!("pop up import window");
-			}
+				self.selected_dict_url = Some(url.clone());
 
+				return create_import_task(url);
+			}
 			Message::ImportCancelled => info!("import cancelled"),
-			Message::OpenFileError(err) => error!("open file error: {err}"),
+			Message::ImportError(err) => {
+				error!("import failed: {err}");
+				self.selected_dict_url = None;
+			}
+			Message::ODictCopied(odict, path) => {
+				let mut dict = LazyDict::new(path);
+				dict.load(odict.into());
+				self.dicts.push(dict);
+				self.selected_dict_url = None;
+			}
 		}
 		Task::none()
 	}
@@ -504,7 +512,7 @@ impl AppModel {
 
 	/// Search term in selected dictionary
 	fn search(&mut self) -> Task<cosmic::Action<Message>> {
-		let _span = tracing::debug_span!("search").entered();
+		let _span = debug_span!("search").entered();
 		let t0 = now();
 
 		self.nav.clear();
@@ -518,7 +526,7 @@ impl AppModel {
 		if let Some(dict) = self.dicts.get_mut(self.config.dict_index) {
 			let terms = dict.search(s).unwrap().into_iter().take(1000).collect();
 			self.dict_entry = dict.get(s).unwrap().cloned();
-			tracing::debug!(
+			debug!(
 				"search \"{}\" in dict {} finished in {:.3}s",
 				s,
 				self.config.dict_index,
@@ -528,9 +536,9 @@ impl AppModel {
 			return Task::done(Message::SearchResult(terms)).map(cosmic::Action::from);
 		}
 
-		tracing::error!("dict_index not valid: {}", self.config.dict_index);
+		error!("dict_index not valid: {}", self.config.dict_index);
 		self.config.dict_index = 0;
-		tracing::info!("reset dict_index to 0");
+		info!("reset dict_index to 0");
 
 		self.update_title()
 	}
