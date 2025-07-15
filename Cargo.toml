@@ -28,7 +28,7 @@ anyhow = "1"
 url = "2.5.4"
 
 [dependencies.i18n-embed]
-version = "0.15"
+version = "0.16"
 features = ["fluent-system", "desktop-requester"]
 
 [dependencies.libcosmic]
