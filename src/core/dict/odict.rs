@@ -43,8 +43,11 @@ pub fn read_odict_from_path(path: &Path) -> anyhow::Result<odict::Dictionary> {
 ///
 /// Will return `Err` if write failed
 pub fn write_odict_to_path(dictionary: &odict::Dictionary, path: &Path) -> anyhow::Result<()> {
+	let compress_options = odict::CompressOptions::default().quality(8).window_size(22);
+	let writer_options =
+		odict::io::DictionaryWriterOptions::default().compression(compress_options);
 	odict::DictionaryWriter::new()
-		.write_to_path(dictionary, path)
+		.write_to_path_with_opts(dictionary, path, writer_options)
 		.map_err(|err| anyhow::anyhow!(err))
 }
 
