@@ -473,8 +473,39 @@ impl AppModel {
 	}
 
 	#[must_use]
-	pub fn data_dir() -> PathBuf {
+	pub fn local_data_dir() -> PathBuf {
 		Self::project_dirs().data_dir().to_path_buf()
+	}
+
+	#[must_use]
+	pub fn system_data_dir() -> PathBuf {
+		PathBuf::from("/usr/share").join(Self::APP_NAME)
+	}
+
+	/// Returns a sorted list of all dictionaries under the data directories.
+	///
+	/// # Errors
+	///
+	/// Will return an error if any of the data directories could not be read.
+	pub fn dict_paths() -> anyhow::Result<Vec<PathBuf>> {
+		let mut paths = Vec::new();
+
+		for dir in &[Self::local_data_dir(), Self::system_data_dir()] {
+			if !dir.is_dir() {
+				continue;
+			}
+
+			for entry in dir.read_dir()? {
+				let path = entry?.path();
+				if path.is_file() && path.extension().is_some_and(|s| s == "odict") {
+					paths.push(path);
+				}
+			}
+		}
+
+		paths.sort();
+
+		Ok(paths)
 	}
 
 	#[must_use]

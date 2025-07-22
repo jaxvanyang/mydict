@@ -70,10 +70,17 @@ pub async fn import_odict(url: &Url) -> anyhow::Result<(odict::Dictionary, PathB
 			anyhow::bail!("{url} has unknown schema: {other}");
 		}
 	};
-	info!("reading ODict from {path:?}...");
+
+	info!("reading ODict from {}...", path.display());
 	let mut odict = read_odict_from_path(&path)?;
+
+	let local_data_dir = AppModel::local_data_dir();
+	if !local_data_dir.exists() {
+		std::fs::create_dir_all(&local_data_dir)?;
+	}
+
 	let target_path = if let Some(name) = &odict.name {
-		AppModel::data_dir().join(format!("{}.odict", name.replace(['/', '\\'], "|")))
+		local_data_dir.join(format!("{}.odict", name.replace(['/', '\\'], "|")))
 	} else {
 		let name = path
 			.file_stem()
@@ -81,7 +88,7 @@ pub async fn import_odict(url: &Url) -> anyhow::Result<(odict::Dictionary, PathB
 			.to_string_lossy()
 			.to_string();
 		odict.name = Some(name.clone());
-		AppModel::data_dir().join(format!("{name}.odict"))
+		local_data_dir.join(format!("{name}.odict"))
 	};
 
 	if target_path.exists() {
