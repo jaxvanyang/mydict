@@ -1,13 +1,19 @@
 use crate::{app::AppModel, elapsed_secs, now};
+use odict::semver::SemanticVersion;
 use std::path::{Path, PathBuf};
 use tracing::{info, info_span};
 use url::Url;
 
-pub const SUPPORTED_ODICT_VERSION: (u64, u64) = (2, 8);
+pub const MINIMAL_ODICT_VERSION: SemanticVersion = SemanticVersion {
+	major: 2,
+	minor: 8,
+	patch: 0,
+	prerelease: None,
+};
 
 #[must_use]
 pub fn is_odict_file_compatible(file: &odict::DictionaryFile) -> bool {
-	(file.version.major, file.version.minor) == SUPPORTED_ODICT_VERSION
+	file.version == MINIMAL_ODICT_VERSION || file.version > MINIMAL_ODICT_VERSION
 }
 
 /// # Errors
@@ -29,7 +35,7 @@ pub fn read_odict_from_path(path: &Path) -> anyhow::Result<odict::Dictionary> {
 	let odict_file = read_odict_file_from_path(path)?;
 	if !is_odict_file_compatible(&odict_file) {
 		anyhow::bail!(
-			"require ODict version ~{SUPPORTED_ODICT_VERSION:?}, but found {}",
+			"require ODict version ~{MINIMAL_ODICT_VERSION}, but found {}",
 			odict_file.version
 		)
 	}

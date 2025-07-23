@@ -24,7 +24,7 @@ use cosmic::{
 };
 use directories::ProjectDirs;
 use futures_util::SinkExt;
-use odict::{DefinitionType, Entry};
+use odict::{DefinitionType, Entry, semver::SemanticVersion};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use tracing::{debug, debug_span, error, info, info_span};
@@ -73,7 +73,7 @@ pub enum Message {
 	SelectDict(usize),
 	LoadDict((usize, Dictionary)),
 	LoadError(String),
-	DictNotCompatible((usize, (u64, u64, u64))),
+	DictNotCompatible((usize, SemanticVersion)),
 }
 
 /// Create a COSMIC application from the app model
@@ -360,8 +360,8 @@ impl cosmic::Application for AppModel {
 				self.dicts.push(dict);
 				self.selected_dict_url = None;
 			}
-			Message::DictNotCompatible((index, (major, minor, patch))) => {
-				error!("dict {index} file version not compatible: {major}.{minor}.{patch}");
+			Message::DictNotCompatible((index, version)) => {
+				error!("dict {index} file version not compatible: {version}");
 				self.dicts.remove(index);
 			}
 		}

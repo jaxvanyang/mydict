@@ -23,14 +23,7 @@ pub fn create_load_task(index: usize, path: PathBuf) -> Task {
 			Err(err) => return Message::LoadError(err.to_string()),
 		};
 		if !is_odict_file_compatible(&odict_file) {
-			return Message::DictNotCompatible((
-				index,
-				(
-					odict_file.version.major,
-					odict_file.version.minor,
-					odict_file.version.patch,
-				),
-			));
+			return Message::DictNotCompatible((index, odict_file.version));
 		}
 		let dict = Dictionary::load_from_path(&path);
 		match dict {
