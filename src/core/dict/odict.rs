@@ -12,6 +12,7 @@ pub const MINIMAL_ODICT_VERSION: SemanticVersion = SemanticVersion {
 };
 
 #[must_use]
+#[allow(clippy::double_comparisons)]
 pub fn is_odict_file_compatible(file: &odict::DictionaryFile) -> bool {
 	file.version == MINIMAL_ODICT_VERSION || file.version > MINIMAL_ODICT_VERSION
 }

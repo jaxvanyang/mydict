@@ -7,7 +7,6 @@ pub use tasks::*;
 pub use utils::*;
 
 use crate::config::Config;
-use crate::font::font_builder;
 use crate::{Dictionary, fl};
 use crate::{LazyDict, elapsed_secs, now};
 use cosmic::app::context_drawer;
@@ -17,7 +16,7 @@ use cosmic::iced::Length::{self};
 use cosmic::iced::{Alignment, Subscription, window};
 use cosmic::iced_widget::{column, horizontal_rule};
 use cosmic::prelude::*;
-use cosmic::widget::{self, button, menu, nav_bar, scrollable, text};
+use cosmic::widget::{self, button, markdown, menu, nav_bar, scrollable, text};
 use cosmic::{
 	cosmic_theme::{self},
 	theme,
@@ -55,6 +54,7 @@ pub struct AppModel {
 /// Messages emitted by the application and its widgets.
 #[derive(Debug, Clone)]
 pub enum Message {
+	Unhandled,
 	OpenRepositoryUrl,
 	SubscriptionChannel,
 	ToggleContextPage(ContextPage),
@@ -256,6 +256,7 @@ impl cosmic::Application for AppModel {
 	#[allow(clippy::too_many_lines)]
 	fn update(&mut self, message: Self::Message) -> Task<cosmic::Action<Self::Message>> {
 		match message {
+			Message::Unhandled => (),
 			Message::LoadError(msg) => error!("load dictionary error: {msg}"),
 			Message::OpenRepositoryUrl => {
 				_ = open::that_detached(REPOSITORY);
@@ -561,80 +562,62 @@ impl AppModel {
 	/// Build term page from `ODict` entry
 	fn build_term_page(&self) -> widget::Column<Message> {
 		let mut page = widget::column().push(horizontal_rule(2));
+		let mut md_lines = Vec::new();
 
 		if let Some(entry) = &self.dict_entry {
-			page = page.push(text::title1(&entry.term));
+			md_lines.push(format!("# {}", entry.term));
 
 			for (i, ety) in entry.etymologies.iter().enumerate() {
-				page = page.push(horizontal_rule(2));
 				if entry.etymologies.len() > 1 {
-					page = page.push(text::title2(format!("Etymology #{}", i + 1)));
+					md_lines.push(format!("## Etymology #{}", i + 1));
 				}
 				if let Some(desc) = &ety.description {
-					for p in desc.lines().map(text::body) {
-						page = page.push(p);
+					for p in desc.lines() {
+						md_lines.push(format!("{p}\n"));
 					}
 				}
 				for sense in &ety.senses {
-					page = page.push(
-						text::body(sense.pos.to_string())
-							.font(font_builder().italic().bold().build()),
-					);
+					md_lines.push(format!("**{}**\n", sense.pos));
 					for (j, def) in sense.definitions.iter().enumerate() {
 						let alphabetic_numbering = |i| (b'a' + u8::try_from(i).unwrap()) as char;
 						match def {
 							DefinitionType::Definition(def) => {
-								page =
-									page.push(text::body(format!("{:>4}. {}", j + 1, def.value)));
+								md_lines.push(format!("{}. {}\n", j + 1, def.value));
 								for example in &def.examples {
-									page = page.push(
-										text::body(format!("\t▸ {}", example.value))
-											.font(font_builder().italic().build()),
-									);
+									md_lines.push(format!("\t- {}\n", example.value));
 								}
 
 								if !def.notes.is_empty() {
-									page = page.push(text::heading("\tNotes"));
+									md_lines.push("\tNotes\n".to_string());
 								}
 
 								for (k, note) in def.notes.iter().enumerate() {
-									page = page.push(text::body(format!(
-										"\t{:>4}. {}",
+									md_lines.push(format!(
+										"\t{}. {}\n",
 										alphabetic_numbering(k),
 										note.value
-									)));
+									));
 								}
 							}
 							DefinitionType::Group(group) => {
-								page = page.push(text::body(format!(
-									"{:>4}. {}",
-									j + 1,
-									group.description
-								)));
+								md_lines.push(format!("{}. {}\n", j + 1, group.description));
 
 								for (k, def) in group.definitions.iter().enumerate() {
-									page = page.push(text::body(format!(
-										"{:>8}. {}",
+									md_lines.push(format!(
+										"\t{}. {}\n",
 										alphabetic_numbering(k),
 										def.value
-									)));
+									));
 									for example in &def.examples {
-										page = page.push(
-											text::body(format!("\t    ▸ {}", example.value))
-												.font(font_builder().italic().build()),
-										);
+										md_lines.push(format!("\t\t- {}\n", example.value));
 									}
 
 									if !def.notes.is_empty() {
-										page = page.push(text::heading("\t    Notes"));
+										md_lines.push("\t\tNotes\n".to_string());
 									}
 
 									for (l, note) in def.notes.iter().enumerate() {
-										page = page.push(text::body(format!(
-											"\t{:>8}. {}",
-											l + 1,
-											note.value
-										)));
+										md_lines.push(format!("\t\t{}. {}\n", l + 1, note.value));
 									}
 								}
 							}
@@ -661,6 +644,17 @@ impl AppModel {
 				.align_x(Alignment::Center),
 			);
 		}
+
+		let md_content = md_lines.join("\n");
+		let md_items: Vec<markdown::Item> = markdown::parse(&md_content).collect();
+		// TODO: handle markdown URL
+		let md_view = markdown::view(
+			&md_items,
+			markdown::Settings::default(),
+			markdown::Style::from_palette(cosmic::iced::Theme::TokyoNightStorm.palette()),
+		)
+		.map(|_| Message::Unhandled);
+		page = page.push(md_view);
 
 		page.width(Length::Fill).spacing(5)
 	}
