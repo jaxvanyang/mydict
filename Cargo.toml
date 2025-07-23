@@ -18,7 +18,7 @@ vergen = { version = "8", features = ["git", "gitcl"] }
 directories = "6.0.0"
 futures-util = "0.3.31"
 i18n-embed-fl = "0.10.0"
-odict = "~2.8.0"
+odict = "~2.9.0"
 open = "5.3.0"
 rust-embed = "8.7.2"
 tokio = { version = "1.46.1", features = ["full"] }
