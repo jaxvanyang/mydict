@@ -54,6 +54,6 @@ features = [
 	# Enable about widget
 	"about",
 	"markdown",
-	# see iced/widget/src/markdown.rs:147:25
+	# Required by markdown
 	"highlighter",
 ]
