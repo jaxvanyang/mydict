@@ -20,7 +20,7 @@ futures-util = "0.3.31"
 i18n-embed-fl = "0.10.0"
 odict = "~2.9.0"
 open = "5.3.3"
-rust-embed = "8.7.2"
+rust-embed = "8.11.0"
 tokio = { version = "1.47.0", features = ["full"] }
 tracing = "0.1.41"
 tracing-subscriber = "0.3.20"
