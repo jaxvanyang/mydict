@@ -13,8 +13,8 @@ use cosmic::app::context_drawer;
 use cosmic::cosmic_config::{self, CosmicConfigEntry};
 use cosmic::dialog::file_chooser::{self, FileFilter};
 use cosmic::iced::Length::{self};
+use cosmic::iced::widget::rule;
 use cosmic::iced::{Alignment, Subscription, window};
-use cosmic::iced_widget::{column, horizontal_rule};
 use cosmic::prelude::*;
 use cosmic::widget::{self, button, markdown, menu, nav_bar, scrollable, text};
 use cosmic::{
@@ -22,7 +22,7 @@ use cosmic::{
 	theme,
 };
 use directories::ProjectDirs;
-use futures_util::SinkExt;
+
 use odict::{DefinitionType, Entry, semver::SemanticVersion};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -48,6 +48,7 @@ pub struct AppModel {
 	config_manager: cosmic_config::Config,
 	dicts: Vec<LazyDict>,
 	dict_entry: Option<Entry>,
+	md_items: Vec<markdown::Item>,
 	selected_dict_url: Option<Url>,
 }
 
@@ -56,7 +57,6 @@ pub struct AppModel {
 pub enum Message {
 	Unhandled,
 	OpenRepositoryUrl,
-	SubscriptionChannel,
 	ToggleContextPage(ContextPage),
 	UpdateConfig(Config),
 	LaunchUrl(String),
@@ -121,6 +121,7 @@ impl cosmic::Application for AppModel {
 			config_manager,
 			dicts: init_app_dicts().unwrap(),
 			dict_entry: None,
+			md_items: Vec::new(),
 			selected_dict_url: None,
 		};
 
@@ -138,7 +139,7 @@ impl cosmic::Application for AppModel {
 	}
 
 	/// Elements to pack at the start of the header bar.
-	fn header_start(&self) -> Vec<Element<Self::Message>> {
+	fn header_start(&self) -> Vec<Element<'_, Self::Message>> {
 		let file_menu = menu::Tree::with_children(
 			menu::root(fl!("file")).apply(Element::from),
 			menu::items(
@@ -158,7 +159,7 @@ impl cosmic::Application for AppModel {
 		vec![menu_bar.into()]
 	}
 
-	fn header_center(&self) -> Vec<Element<Self::Message>> {
+	fn header_center(&self) -> Vec<Element<'_, Self::Message>> {
 		let search_input = widget::search_input("", &self.config.search_term)
 			.on_input(Message::ChangeSearch)
 			.on_clear(Message::ChangeSearch(String::new()))
@@ -173,7 +174,7 @@ impl cosmic::Application for AppModel {
 	}
 
 	/// Display a context drawer if the context page is requested.
-	fn context_drawer(&self) -> Option<context_drawer::ContextDrawer<Self::Message>> {
+	fn context_drawer(&self) -> Option<context_drawer::ContextDrawer<'_, Self::Message>> {
 		if !self.core.window.show_context {
 			return None;
 		}
@@ -187,7 +188,7 @@ impl cosmic::Application for AppModel {
 		})
 	}
 
-	fn view_window(&self, _window_id: window::Id) -> Element<Self::Message> {
+	fn view_window(&self, _window_id: window::Id) -> Element<'_, Self::Message> {
 		widget::text("Unknown window ID").into()
 	}
 
@@ -195,7 +196,7 @@ impl cosmic::Application for AppModel {
 	///
 	/// Application events will be processed through the view. Any messages emitted by
 	/// events received by widgets will be passed to the update method.
-	fn view(&self) -> Element<Self::Message> {
+	fn view(&self) -> Element<'_, Self::Message> {
 		#[allow(clippy::from_iter_instead_of_collect)]
 		let dicts = scrollable::horizontal(widget::Row::from_iter(self.dicts.iter().enumerate().map(
 			|(i, d)| {
@@ -206,7 +207,7 @@ impl cosmic::Application for AppModel {
 
 		// TODO: use custom widget
 		let term_page = scrollable(self.build_term_page().padding(10));
-		let content = column![dicts, term_page].spacing(5);
+		let content = widget::Column::new().push(dicts).push(term_page).spacing(5);
 		let mut content = widget::popover(content).modal(true);
 
 		if let Some(url) = &self.selected_dict_url {
@@ -223,30 +224,16 @@ impl cosmic::Application for AppModel {
 	/// emit messages to the application through a channel. They are started at the
 	/// beginning of the application, and persist through its lifetime.
 	fn subscription(&self) -> Subscription<Self::Message> {
-		struct MySubscription;
+		// Watch for application configuration changes.
+		self.core()
+			.watch_config::<Config>(Self::APP_ID)
+			.map(|update| {
+				for why in update.errors {
+					error!(?why, "app config error");
+				}
 
-		Subscription::batch(vec![
-			// Create a subscription which emits updates through a channel.
-			Subscription::run_with_id(
-				std::any::TypeId::of::<MySubscription>(),
-				#[allow(clippy::semicolon_if_nothing_returned)]
-				cosmic::iced::stream::channel(4, move |mut channel| async move {
-					_ = channel.send(Message::SubscriptionChannel).await;
-
-					futures_util::future::pending().await
-				}),
-			),
-			// Watch for application configuration changes.
-			self.core()
-				.watch_config::<Config>(Self::APP_ID)
-				.map(|update| {
-					for why in update.errors {
-						error!(?why, "app config error");
-					}
-
-					Message::UpdateConfig(update.config)
-				}),
-		])
+				Message::UpdateConfig(update.config)
+			})
 	}
 
 	/// Handles messages emitted by the application and its widgets.
@@ -260,9 +247,6 @@ impl cosmic::Application for AppModel {
 			Message::LoadError(msg) => error!("load dictionary error: {msg}"),
 			Message::OpenRepositoryUrl => {
 				_ = open::that_detached(REPOSITORY);
-			}
-			Message::SubscriptionChannel => {
-				// For example purposes only.
 			}
 			Message::ToggleContextPage(context_page) => {
 				if self.context_page == context_page {
@@ -374,10 +358,11 @@ impl cosmic::Application for AppModel {
 		// Activate the page in the model.
 		self.nav.activate(id);
 
-		if let Some(dict) = self.dicts.get_mut(self.config.selected_index) {
-			if let Some(s) = self.nav.text(id) {
-				self.dict_entry = dict.get(s).unwrap().cloned();
-			}
+		if let Some(dict) = self.dicts.get_mut(self.config.selected_index)
+			&& let Some(s) = self.nav.text(id)
+		{
+			self.dict_entry = dict.get(s).unwrap().cloned();
+			self.update_md_items();
 		}
 
 		self.update_title()
@@ -389,7 +374,7 @@ impl AppModel {
 
 	/// The about page for this app.
 	#[allow(clippy::unused_self)]
-	pub fn about(&self) -> Element<Message> {
+	pub fn about(&self) -> Element<'_, Message> {
 		let cosmic_theme::Spacing { space_xxs, .. } = theme::active().cosmic().spacing;
 
 		let icon = widget::svg(widget::svg::Handle::from_memory(APP_ICON));
@@ -404,7 +389,7 @@ impl AppModel {
 			.on_press(Message::OpenRepositoryUrl)
 			.padding(0);
 
-		widget::column()
+		widget::Column::new()
 			.push(icon)
 			.push(title)
 			.push(link)
@@ -420,6 +405,78 @@ impl AppModel {
 			.align_x(Alignment::Center)
 			.spacing(space_xxs)
 			.into()
+	}
+
+	/// Update markdown items from current dictionary entry.
+	fn update_md_items(&mut self) {
+		if let Some(entry) = &self.dict_entry {
+			let mut md_lines = Vec::new();
+			md_lines.push(format!("# {}", entry.term));
+
+			for (i, ety) in entry.etymologies.iter().enumerate() {
+				if entry.etymologies.len() > 1 {
+					md_lines.push(format!("## Etymology #{}", i + 1));
+				}
+				if let Some(desc) = &ety.description {
+					for p in desc.lines() {
+						md_lines.push(format!("{p}\n"));
+					}
+				}
+				for sense in &ety.senses {
+					md_lines.push(format!("**{}**\n", sense.pos));
+					for (j, def) in sense.definitions.iter().enumerate() {
+						let alphabetic_numbering = |i| (b'a' + u8::try_from(i).unwrap()) as char;
+						match def {
+							DefinitionType::Definition(def) => {
+								md_lines.push(format!("{}. {}\n", j + 1, def.value));
+								for example in &def.examples {
+									md_lines.push(format!("\t- {}\n", example.value));
+								}
+
+								if !def.notes.is_empty() {
+									md_lines.push("\tNotes\n".to_string());
+								}
+
+								for (k, note) in def.notes.iter().enumerate() {
+									md_lines.push(format!(
+										"\t{}. {}\n",
+										alphabetic_numbering(k),
+										note.value
+									));
+								}
+							}
+							DefinitionType::Group(group) => {
+								md_lines.push(format!("{}. {}\n", j + 1, group.description));
+
+								for (k, def) in group.definitions.iter().enumerate() {
+									md_lines.push(format!(
+										"\t{}. {}\n",
+										alphabetic_numbering(k),
+										def.value
+									));
+									for example in &def.examples {
+										md_lines.push(format!("\t\t- {}\n", example.value));
+									}
+
+									if !def.notes.is_empty() {
+										md_lines.push("\t\tNotes\n".to_string());
+									}
+
+									for (l, note) in def.notes.iter().enumerate() {
+										md_lines.push(format!("\t\t{}. {}\n", l + 1, note.value));
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+
+			let md_content = md_lines.join("\n");
+			self.md_items = markdown::parse(&md_content).collect();
+		} else {
+			self.md_items.clear();
+		}
 	}
 
 	/// Updates the header and window titles.
@@ -533,15 +590,17 @@ impl AppModel {
 
 		self.nav.clear();
 
-		let s = self.config.search_term.trim();
+		let s = self.config.search_term.trim().to_string();
 		if s.is_empty() {
 			self.dict_entry = None;
+			self.update_md_items();
 			return Task::none();
 		}
 
 		if let Some(dict) = self.dicts.get_mut(self.config.selected_index) {
-			let terms = dict.search(s).unwrap().into_iter().take(1000).collect();
-			self.dict_entry = dict.get(s).unwrap().cloned();
+			let terms = dict.search(&s).unwrap().into_iter().take(1000).collect();
+			self.dict_entry = dict.get(&s).unwrap().cloned();
+			self.update_md_items();
 			debug!(
 				"search \"{}\" in dict {} finished in {:.3}s",
 				s,
@@ -560,72 +619,10 @@ impl AppModel {
 	}
 
 	/// Build term page from `ODict` entry
-	fn build_term_page(&self) -> widget::Column<Message> {
-		let mut page = widget::column().push(horizontal_rule(2));
-		let mut md_lines = Vec::new();
+	fn build_term_page(&self) -> widget::Column<'_, Message, cosmic::Theme> {
+		let mut page = widget::Column::new().push(rule::horizontal(2));
 
-		if let Some(entry) = &self.dict_entry {
-			md_lines.push(format!("# {}", entry.term));
-
-			for (i, ety) in entry.etymologies.iter().enumerate() {
-				if entry.etymologies.len() > 1 {
-					md_lines.push(format!("## Etymology #{}", i + 1));
-				}
-				if let Some(desc) = &ety.description {
-					for p in desc.lines() {
-						md_lines.push(format!("{p}\n"));
-					}
-				}
-				for sense in &ety.senses {
-					md_lines.push(format!("**{}**\n", sense.pos));
-					for (j, def) in sense.definitions.iter().enumerate() {
-						let alphabetic_numbering = |i| (b'a' + u8::try_from(i).unwrap()) as char;
-						match def {
-							DefinitionType::Definition(def) => {
-								md_lines.push(format!("{}. {}\n", j + 1, def.value));
-								for example in &def.examples {
-									md_lines.push(format!("\t- {}\n", example.value));
-								}
-
-								if !def.notes.is_empty() {
-									md_lines.push("\tNotes\n".to_string());
-								}
-
-								for (k, note) in def.notes.iter().enumerate() {
-									md_lines.push(format!(
-										"\t{}. {}\n",
-										alphabetic_numbering(k),
-										note.value
-									));
-								}
-							}
-							DefinitionType::Group(group) => {
-								md_lines.push(format!("{}. {}\n", j + 1, group.description));
-
-								for (k, def) in group.definitions.iter().enumerate() {
-									md_lines.push(format!(
-										"\t{}. {}\n",
-										alphabetic_numbering(k),
-										def.value
-									));
-									for example in &def.examples {
-										md_lines.push(format!("\t\t- {}\n", example.value));
-									}
-
-									if !def.notes.is_empty() {
-										md_lines.push("\t\tNotes\n".to_string());
-									}
-
-									for (l, note) in def.notes.iter().enumerate() {
-										md_lines.push(format!("\t\t{}. {}\n", l + 1, note.value));
-									}
-								}
-							}
-						}
-					}
-				}
-			}
-		} else {
+		if self.dict_entry.is_none() {
 			page = page.push(
 				// FIXME: change selected dictionary doesn't show loading
 				text::title1(match self.selected_dict() {
@@ -633,8 +630,6 @@ impl AppModel {
 					Some(dict) => {
 						if dict.is_loading {
 							"Loading..."
-						} else if self.dict_entry.is_none() {
-							"Type to search"
 						} else {
 							"Search not found"
 						}
@@ -645,16 +640,29 @@ impl AppModel {
 			);
 		}
 
-		let md_content = md_lines.join("\n");
-		let md_items: Vec<markdown::Item> = markdown::parse(&md_content).collect();
-		// TODO: handle markdown URL
-		let md_view = markdown::view(
-			&md_items,
-			markdown::Settings::default(),
-			markdown::Style::from_palette(cosmic::iced::Theme::TokyoNightStorm.palette()),
-		)
-		.map(|_| Message::Unhandled);
-		page = page.push(md_view);
+		if !self.md_items.is_empty() {
+			// TODO: handle markdown URL
+			struct DictViewer;
+
+			impl<'a, Renderer> markdown::Viewer<'a, Message, cosmic::Theme, Renderer> for DictViewer
+			where
+				Renderer: cosmic::iced::core::text::Renderer<Font = cosmic::iced::core::Font> + 'a,
+				cosmic::Theme: markdown::Catalog + 'a,
+			{
+				fn on_link_click(url: markdown::Uri) -> Message {
+					Message::LaunchUrl(url)
+				}
+			}
+
+			let md_view = markdown::view_with(
+				&self.md_items,
+				markdown::Settings::with_style(markdown::Style::from_palette(
+					cosmic::iced::Theme::TokyoNightStorm.palette(),
+				)),
+				&DictViewer,
+			);
+			page = page.push(md_view);
+		}
 
 		page.width(Length::Fill).spacing(5)
 	}
